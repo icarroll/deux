@@ -59,10 +59,8 @@ void ** call_stack_mem;
 void ** call_stack;
 void ** ip;
 void ** program;
-// void ** dynsup;
 
 void * addr_of[num_opcodes];
-// void * end_of[num_opcodes];
 
 enum action {
     EXECUTE=0,
@@ -91,41 +89,14 @@ void direct_threaded(enum action action) {
 
         if (action == COMPILE) {
             for (int ix=0 ; ix < source_length ; ix += 1) {
-                program[ix] = addr_of[source[ix]];
+                enum opcodes op = source[ix];
+                program[ix] = addr_of[op];
+                if (op == PUSH) {
+                    ix += 1;
+                    program[ix] = (void *) source[ix];
+                }
             }
         }
-        /*
-        else {
-            end_of[STOP] = &&stop_end;
-            end_of[NOOP] = &&noop_end;
-            end_of[DUP] = &&dup_end;
-            end_of[OVER] = &&over_end;
-            end_of[PICK] = &&pick_end;
-            end_of[SWAP] = &&swap_end;
-            end_of[ROT] = &&rot_end;
-            end_of[DROP] = &&drop_end;
-            end_of[JUMP] = &&jump_end;
-            end_of[CALL] = &&call_end;
-            end_of[RET] = &&ret_end;
-            end_of[ZERO] = &&zero_end;
-            end_of[ONE] = &&one_end;
-            end_of[ADD] = &&add_end;
-            end_of[MUL] = &&mul_end;
-
-            void * where = dynsup;
-            for (int ix=0 ; ix < source_length ; ix += 1) {
-                printf("-> %d\n", where);
-                void * op = addr_of[source[ix]];
-                ptrdiff_t length = end_of[source[ix]] - op;
-                memmove(where, op, length);
-                where += length;
-            }
-            printf("-> %d\n", where);
-            program[0] = dynsup;
-            program[1] = addr_of[STOP];
-        }
-        */
-
         return;
     }
 
@@ -255,11 +226,6 @@ int main(int argc, char * argv[]) {
 
     program = calloc(PROGRAM_SIZE, sizeof(void *));
     if (! program) exit(3);
-
-    /*
-    dynsup = calloc(PROGRAM_SIZE, sizeof(void *));
-    if (! dynsup) exit(4);
-    */
 
     direct_threaded(COMPILE);
     direct_threaded(EXECUTE);
