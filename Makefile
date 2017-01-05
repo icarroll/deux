@@ -1,2 +1,4 @@
-all:
-	gcc -std=gnu11 -g -O1 -o stack stack.c
+all: stack
+
+stack: stack.c
+	gcc -std=gnu11 -Ofast -o stack stack.c
