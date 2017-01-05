@@ -14,9 +14,9 @@ enum opcodes {
     SWAP,
     ROT,
     DROP,
-    JUMP,
-    CALL,
-    RET,
+    SKIPIF,
+    FWD,
+    REW,
     ZERO,
     ONE,
     NEGONE,
@@ -77,9 +77,9 @@ void direct_threaded(enum action action) {
         addr_of[SWAP] = &&swap;
         addr_of[ROT] = &&rot;
         addr_of[DROP] = &&drop;
-        addr_of[JUMP] = &&jump;
-        addr_of[CALL] = &&call;
-        addr_of[RET] = &&ret;
+        addr_of[SKIPIF] = &&skipif;
+        addr_of[FWD] = &&fwd;
+        addr_of[REW] = &&rew;
         addr_of[ZERO] = &&zero;
         addr_of[ONE] = &&one;
         addr_of[NEGONE] = &&negone;
@@ -91,10 +91,7 @@ void direct_threaded(enum action action) {
             for (int ix=0 ; ix < source_length ; ix += 1) {
                 enum opcodes op = source[ix];
                 program[ix] = addr_of[op];
-                if (op == PUSH) {
-                    ix += 1;
-                    program[ix] = (void *) source[ix];
-                }
+                if (op == PUSH) ix += 1, program[ix] = (void *) source[ix];
             }
         }
         return;
@@ -146,25 +143,26 @@ drop:
 drop_end:
     goto ** (ip++);
 
-jump:
-    ip = (void **) data_stack[1];
+skipif:
+    temp = data_stack[1];
     data_stack += 1;
+    if (temp) ip += 1;
     goto ** (ip++);
-jump_end:
+skipif_end:
 
-call:
-    call_stack[0] = ip;
-    call_stack -= 1;
-    ip = (void **) data_stack[1];
+fwd:
+    temp = data_stack[1];
     data_stack += 1;
+    ip += temp;
     goto ** (ip++);
-call_end:
+fwd_end:
 
-ret:
-    ip = call_stack[1];
-    call_stack += 1;
+rew:
+    temp = data_stack[1];
+    data_stack += 1;
+    ip -= temp;
     goto ** (ip++);
-ret_end:
+rew_end:
 
 stop:
     return;
