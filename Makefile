@@ -1,4 +1,14 @@
+CFLAGS = -std=gnu11 -O -lreadline
+
 all: stack
 
-stack: stack.c
-	gcc -std=gnu11 -Ofast -o stack stack.c
+.PHONY: debug debug_do clean
+
+debug:
+	$(MAKE) -B debug_do
+
+debug_do: CFLAGS += -g
+debug_do: all
+
+clean:
+	rm stack
