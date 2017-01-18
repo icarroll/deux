@@ -390,10 +390,41 @@ void run() {
     //direct_threaded(EXECUTE);
 }
 
+// begin symbol trie
+
+struct trie_node {
+    char * name;
+    struct trie_node * child[256];
+};
+
+struct trie_node symbols = {};
+
+void * get_symbol_ref(char * name) {
+    struct trie_node * node = & symbols;
+
+    for (int n=0 ; name[n] ; n += 1) {
+        struct trie_node * next_node = node->child[name[n]];
+        if (! next_node) {
+            next_node = calloc(1, sizeof(struct trie_node));
+            next_node->name = calloc(n+2, sizeof(char));
+            memmove(next_node->name, name, n+1);
+            node->child[name[n]] = next_node;
+        }
+        node = next_node;
+    }
+
+    return (void *) node;
+}
+
+// end symbol trie
+
+// begin cons tree
+
 enum cons_tag {
     cons_tag = 0,
     char_tag,
     int_tag,
+    sym_tag,
 };
 
 struct item {
@@ -413,6 +444,9 @@ struct item ch(int c) {
 struct item num(int n) {
     return (struct item) {int_tag, (void *) n};
 }
+struct item sym(char * name) {
+    return (struct item) {sym_tag, (void *) get_symbol_ref(name)};
+}
 struct item cons(struct item head, struct item tail) {
     struct cons * cell = malloc(sizeof(struct cons));
     cell->head = head;
@@ -420,49 +454,43 @@ struct item cons(struct item head, struct item tail) {
     return (struct item) {cons_tag, cell};
 }
 
-struct item parse(char * line) {
-    //TODO
-}
+void print_tail_cons(struct cons * cell);
 
-void print_cons_tree_guts(struct cons * cell);
-
-void print_cons_tree(struct item item) {
+void print_cons_item(struct item item) {
     struct cons * cell = item.ptr;
 
-    fputc('(', stdout);
-
-    if (cell) print_cons_tree_guts(cell);
-
-    fputc(')', stdout);
-}
-
-void print_cons_tree_guts(struct cons * cell) {
-    switch (cell->head.tag) {
+    switch (item.tag) {
         case char_tag:
-            fputc((int) cell->head.ptr, stdout);
+            fprintf(stdout, "'%c'", (int) item.ptr);
             break;
         case int_tag:
-            fprintf(stdout, "%u", (unsigned int) cell->head.ptr);
+            fprintf(stdout, "%u", (unsigned int) item.ptr);
+            break;
+        case sym_tag:
+            fprintf(stdout, "%s", ((struct trie_node *) item.ptr)->name);
             break;
         case cons_tag:
-            if (cell->head.ptr) print_cons_tree(cell->head);
-            else fputs("()", stdout);
+            fputc('(', stdout);
+            if (cell) print_tail_cons(cell);
+            fputc(')', stdout);
             break;
     }
+}
+
+void print_tail_cons(struct cons * cell) {
+    print_cons_item(cell->head);
 
     switch (cell->tail.tag) {
         case char_tag:
-            fputs(" . ", stdout);
-            fputc((int) cell->tail.ptr, stdout);
-            break;
         case int_tag:
+        case sym_tag:
             fputs(" . ", stdout);
-            fprintf(stdout, "%u", (unsigned int) cell->tail.ptr);
+            print_cons_item(cell->tail);
             break;
         case cons_tag:
             if (cell->tail.ptr) {
                 fputc(' ', stdout);
-                print_cons_tree_guts(cell->tail.ptr);
+                print_tail_cons(cell->tail.ptr);
             }
             break;
     }
@@ -484,6 +512,15 @@ void free_cons_tree(struct item item) {
     }
 
     free(cell);
+}
+
+// end cons tree
+
+struct item parse(char * line) {
+    while (* line) {
+        char c = * line;
+        if (c == '(') ;
+    }
 }
 
 struct action compile(struct cons * tree) {
@@ -520,25 +557,29 @@ int main(int argc, char * argv[]) {
     struct item x;
 
     // ()
-    print_cons_tree(nil); putchar('\n');
+    print_cons_item(nil); putchar('\n');
 
     // (())
     x = cons(nil, nil);
-    print_cons_tree(x); putchar('\n');
+    print_cons_item(x); putchar('\n');
     free_cons_tree(x);
 
     // (H i)
     x = cons(ch('H'), cons(ch('i'), nil));
-    print_cons_tree(x); putchar('\n');
+    print_cons_item(x); putchar('\n');
     free_cons_tree(x);
 
     // (H . i)
     x = cons(ch('H'), ch('i'));
-    print_cons_tree(x); putchar('\n');
+    print_cons_item(x); putchar('\n');
     free_cons_tree(x);
 
     // ((H e l l o ,) (W o r l d !))
     x = cons(cons(ch('H'), cons(ch('e'), cons(ch('l'), cons(ch('l'), cons(ch('o'), cons(ch(','), nil)))))), cons(cons(ch('W'), cons(ch('o'), cons(ch('r'), cons(ch('l'), cons(ch('d'), cons(ch('!'), nil)))))), nil));
-    print_cons_tree(x); putchar('\n');
+    print_cons_item(x); putchar('\n');
+    free_cons_tree(x);
+
+    x = cons(sym("Hello,"), sym("World!"));
+    print_cons_item(x); putchar('\n');
     free_cons_tree(x);
 }
