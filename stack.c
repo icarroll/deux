@@ -52,7 +52,7 @@ uint32_t * data_stack_mem;
 uint32_t * data_sp;
 void ** call_stack_mem;
 void ** call_sp;
-register void ** ip asm("r11");
+register void ** ip asm("r11"); //TODO does this work?
 void ** program;
 
 void * addr_of[num_opcodes];
@@ -72,6 +72,19 @@ struct action {
     };
     int length;
 } blank_action;
+
+void free_action(struct action act) {
+    switch (act.action) {
+        case EXECUTE:
+            free(act.to_execute);
+            break;
+        case ASSEMBLE:
+            free(act.to_assemble);
+            break;
+        default:
+            break;
+    }
+}
 
 void print_stack() {
     uint32_t * end = data_stack_mem + STACK_SIZE;
@@ -377,31 +390,104 @@ void run() {
     //direct_threaded(EXECUTE);
 }
 
-struct astree {
+enum cons_tag {
+    cons_tag = 0,
+    char_tag,
+    int_tag,
 };
 
-void free_action(struct action act) {
-    switch (act.action) {
-        case EXECUTE:
-            free(act.to_execute);
+struct item {
+    enum cons_tag tag;
+    void * ptr;
+};
+
+struct cons {
+    struct item head;
+    struct item tail;
+};
+
+struct item nil = {cons_tag, NULL};
+struct item ch(int c) {
+    return (struct item) {char_tag, (void *) c};
+}
+struct item num(int n) {
+    return (struct item) {int_tag, (void *) n};
+}
+struct item cons(struct item head, struct item tail) {
+    struct cons * cell = malloc(sizeof(struct cons));
+    cell->head = head;
+    cell->tail = tail;
+    return (struct item) {cons_tag, cell};
+}
+
+struct item parse(char * line) {
+    //TODO
+}
+
+void print_cons_tree_guts(struct cons * cell);
+
+void print_cons_tree(struct item item) {
+    struct cons * cell = item.ptr;
+
+    fputc('(', stdout);
+
+    if (cell) print_cons_tree_guts(cell);
+
+    fputc(')', stdout);
+}
+
+void print_cons_tree_guts(struct cons * cell) {
+    switch (cell->head.tag) {
+        case char_tag:
+            fputc((int) cell->head.ptr, stdout);
             break;
-        case ASSEMBLE:
-            free(act.to_assemble);
+        case int_tag:
+            fprintf(stdout, "%u", (unsigned int) cell->head.ptr);
             break;
-        default:
+        case cons_tag:
+            if (cell->head.ptr) print_cons_tree(cell->head);
+            else fputs("()", stdout);
+            break;
+    }
+
+    switch (cell->tail.tag) {
+        case char_tag:
+            fputs(" . ", stdout);
+            fputc((int) cell->tail.ptr, stdout);
+            break;
+        case int_tag:
+            fputs(" . ", stdout);
+            fprintf(stdout, "%u", (unsigned int) cell->tail.ptr);
+            break;
+        case cons_tag:
+            if (cell->tail.ptr) {
+                fputc(' ', stdout);
+                print_cons_tree_guts(cell->tail.ptr);
+            }
             break;
     }
 }
 
-struct astree * parse(char * line) {
-    void * item;
-    void * next;
+void free_cons_tree(struct item item) {
+    struct cons * cell = item.ptr;
+
+    if (! cell) {
+        return;
+    }
+
+    if (cell->head.tag == cons_tag) {
+        free_cons_tree(cell->head);
+    }
+
+    if (cell->tail.tag == cons_tag) {
+        free_cons_tree(cell->tail);
+    }
+
+    free(cell);
 }
 
-void free_astree(struct astree * tree) {
-}
-
-struct action compile(struct astree * tree) {
+struct action compile(struct cons * tree) {
+//TODO
 }
 
 void rep() {
@@ -414,20 +500,45 @@ void rep() {
     call_sp = call_stack_mem + STACK_SIZE-1;
 
     char * line = readline("deux> ");
-    struct astree * tree = parse(line);
+    struct item tree = parse(line);
     //struct action assemble_opcodes = compile(tree);
     //struct action execute_program = direct_threaded(assemble_opcodes);
     //direct_threaded(execute_program);
 
     //free_action(assemble_opcodes);
     //free_action(execute_program);
-    free_astree(tree);
+    free_cons_tree(tree);
     free(line);
     free(call_stack_mem);
     free(data_stack_mem);
 }
 
 int main(int argc, char * argv[]) {
-    rep();
-    print_stack();
+    //rep();
+    //print_stack();
+
+    struct item x;
+
+    // ()
+    print_cons_tree(nil); putchar('\n');
+
+    // (())
+    x = cons(nil, nil);
+    print_cons_tree(x); putchar('\n');
+    free_cons_tree(x);
+
+    // (H i)
+    x = cons(ch('H'), cons(ch('i'), nil));
+    print_cons_tree(x); putchar('\n');
+    free_cons_tree(x);
+
+    // (H . i)
+    x = cons(ch('H'), ch('i'));
+    print_cons_tree(x); putchar('\n');
+    free_cons_tree(x);
+
+    // ((H e l l o ,) (W o r l d !))
+    x = cons(cons(ch('H'), cons(ch('e'), cons(ch('l'), cons(ch('l'), cons(ch('o'), cons(ch(','), nil)))))), cons(cons(ch('W'), cons(ch('o'), cons(ch('r'), cons(ch('l'), cons(ch('d'), cons(ch('!'), nil)))))), nil));
+    print_cons_tree(x); putchar('\n');
+    free_cons_tree(x);
 }
