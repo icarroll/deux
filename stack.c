@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <readline/readline.h>
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -416,6 +417,23 @@ void * get_symbol_ref(char * name) {
     return (void *) node;
 }
 
+void * get_symbol_ref_n(char * name, int length) {
+    struct trie_node * node = & symbols;
+
+    for (int n=0 ; n < length ; n += 1) {
+        struct trie_node * next_node = node->child[name[n]];
+        if (! next_node) {
+            next_node = calloc(1, sizeof(struct trie_node));
+            next_node->name = calloc(n+2, sizeof(char));
+            memmove(next_node->name, name, n+1);
+            node->child[name[n]] = next_node;
+        }
+        node = next_node;
+    }
+
+    return (void *) node;
+}
+
 // end symbol trie
 
 // begin cons tree
@@ -446,6 +464,9 @@ struct item num(int n) {
 }
 struct item sym(char * name) {
     return (struct item) {sym_tag, (void *) get_symbol_ref(name)};
+}
+struct item sym_n(char * name, int length) {
+    return (struct item) {sym_tag, (void *) get_symbol_ref_n(name, length)};
 }
 struct item cons(struct item head, struct item tail) {
     struct cons * cell = malloc(sizeof(struct cons));
@@ -496,30 +517,101 @@ void print_tail_cons(struct cons * cell) {
     }
 }
 
-void free_cons_tree(struct item item) {
+void free_cons_item(struct item item) {
+    if (item.tag != cons_tag) return;
+    if (! item.ptr) return;
     struct cons * cell = item.ptr;
-
-    if (! cell) {
-        return;
-    }
-
-    if (cell->head.tag == cons_tag) {
-        free_cons_tree(cell->head);
-    }
-
-    if (cell->tail.tag == cons_tag) {
-        free_cons_tree(cell->tail);
-    }
-
+    free_cons_item(cell->head);
+    free_cons_item(cell->tail);
     free(cell);
 }
 
 // end cons tree
 
+jmp_buf abort_parse;
+
+void skip_space(char ** text_ptr) {
+    while (isspace(** text_ptr)) * text_ptr += 1;
+}
+
+struct item parse_tail_cons(char ** text_ptr) ;
+
+struct item parse_cons_item(char ** text_ptr) {
+    char * text = * text_ptr;
+
+    switch (text[0]) {
+        case '\0':
+            goto parse_error;
+
+        case '\'':
+            if (text[1] == '\0' || text[2] == '\0') goto parse_error;
+            if (text[1] == '\'' || text[2] != '\'') goto parse_error;
+            * text_ptr += 3;
+            return ch(text[1]);
+
+        case '0' ... '9':
+            {
+                int num_digits = 0;
+                int temp = 0;
+                do temp = temp*10 + text[0] - '0';
+                while (num_digits+=1, isdigit(*++text));
+                * text_ptr += num_digits;
+                return num(temp);
+            }
+
+        case '(':
+            * text_ptr += 1;
+
+            skip_space(text_ptr);
+            return parse_tail_cons(text_ptr);
+
+        case ')':
+            goto parse_error;
+
+        case '.':
+            goto parse_error;
+
+        default:   // anything else is a symbol
+            {
+                char * cur = text;
+                for (char c = * cur ; c != '\0' && c != '(' && c != ')' && ! isspace(c) ; c = * cur++);
+                * text_ptr += cur - text;
+                return sym_n(text, cur - text - 1);
+            }
+    }
+
+parse_error:
+    longjmp(abort_parse, 1);
+}
+
+struct item parse_tail_cons(char ** text_ptr) {
+    if (** text_ptr == ')') {
+        * text_ptr += 1;
+        return nil;
+    }
+    else if (** text_ptr == '.') {
+        * text_ptr += 1;
+        skip_space(text_ptr);
+        return parse_cons_item(text_ptr);
+    }
+
+    skip_space(text_ptr);
+    struct item head = parse_cons_item(text_ptr);
+    skip_space(text_ptr);
+    struct item tail = parse_tail_cons(text_ptr);
+    struct item cell = cons(head, tail);
+    return cell;
+}
+
 struct item parse(char * line) {
-    while (* line) {
-        char c = * line;
-        if (c == '(') ;
+    if (setjmp(abort_parse)) {
+        printf("parse error\n");
+        return nil;
+    }
+    else {
+        skip_space(& line);
+        struct item parsed_value = parse_cons_item(& line);
+        return parsed_value;
     }
 }
 
@@ -544,7 +636,7 @@ void rep() {
 
     //free_action(assemble_opcodes);
     //free_action(execute_program);
-    free_cons_tree(tree);
+    free_cons_item(tree);
     free(line);
     free(call_stack_mem);
     free(data_stack_mem);
@@ -554,32 +646,43 @@ int main(int argc, char * argv[]) {
     //rep();
     //print_stack();
 
+    /*
+    struct item x = cons(sym("Hello,"), sym("World!"));
+    print_cons_item(x); putchar('\n');
+    free_cons_item(x);
+    */
+
     struct item x;
 
-    // ()
-    print_cons_item(nil); putchar('\n');
-
-    // (())
-    x = cons(nil, nil);
+    x = parse(" 42");
     print_cons_item(x); putchar('\n');
-    free_cons_tree(x);
+    free_cons_item(x);
 
-    // (H i)
-    x = cons(ch('H'), cons(ch('i'), nil));
+    x = parse("'q'");
     print_cons_item(x); putchar('\n');
-    free_cons_tree(x);
+    free_cons_item(x);
 
-    // (H . i)
-    x = cons(ch('H'), ch('i'));
+    x = parse("hello");
     print_cons_item(x); putchar('\n');
-    free_cons_tree(x);
+    free_cons_item(x);
 
-    // ((H e l l o ,) (W o r l d !))
-    x = cons(cons(ch('H'), cons(ch('e'), cons(ch('l'), cons(ch('l'), cons(ch('o'), cons(ch(','), nil)))))), cons(cons(ch('W'), cons(ch('o'), cons(ch('r'), cons(ch('l'), cons(ch('d'), cons(ch('!'), nil)))))), nil));
+    x = parse(" (   )");
     print_cons_item(x); putchar('\n');
-    free_cons_tree(x);
+    free_cons_item(x);
 
-    x = cons(sym("Hello,"), sym("World!"));
+    x = parse("(1 2 3)");
     print_cons_item(x); putchar('\n');
-    free_cons_tree(x);
+    free_cons_item(x);
+
+    x = parse("('a' . 'b')");
+    print_cons_item(x); putchar('\n');
+    free_cons_item(x);
+
+    x = parse("(Hello 42 . 'x')");
+    print_cons_item(x); putchar('\n');
+    free_cons_item(x);
+
+    x = parse("(Hello, . World!)");
+    print_cons_item(x); putchar('\n');
+    free_cons_item(x);
 }
