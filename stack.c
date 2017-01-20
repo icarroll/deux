@@ -1,4 +1,4 @@
-#include <errno.h>
+#include <readline/history.h>
 #include <readline/readline.h>
 #include <setjmp.h>
 #include <stdbool.h>
@@ -450,6 +450,16 @@ struct item {
     void * ptr;
 };
 
+struct maybe_item {
+    bool present;
+    struct item v;
+};
+
+struct maybe_item nothing = {false};
+struct maybe_item just(struct item value) {
+    return (struct maybe_item) {true, value};
+}
+
 struct cons {
     struct item head;
     struct item tail;
@@ -482,7 +492,7 @@ void print_cons_item(struct item item) {
 
     switch (item.tag) {
         case char_tag:
-            fprintf(stdout, "'%c'", (int) item.ptr);
+            fprintf(stdout, "#\\%c", (int) item.ptr);
             break;
         case int_tag:
             fprintf(stdout, "%u", (unsigned int) item.ptr);
@@ -530,88 +540,142 @@ void free_cons_item(struct item item) {
 
 jmp_buf abort_parse;
 
+void throw_parse_error(char * message) {
+    printf("%s\n", message);
+    longjmp(abort_parse, 1);
+}
+
 void skip_space(char ** text_ptr) {
     while (isspace(** text_ptr)) * text_ptr += 1;
 }
 
+bool symbol_char(char c) {
+    switch (c) {
+        case '\0':
+        case '(':
+        case ')':
+        case '[':
+        case ']':
+        case '{':
+        case '}':
+        case '"':
+        case ',':
+        case '\'':
+        case '`':
+        case ';':
+        case '|':
+        case '\\':
+            return false;
+
+        default:
+            return ! isspace(c);
+    }
+}
+
 struct item parse_tail_cons(char ** text_ptr) ;
 
-struct item parse_cons_item(char ** text_ptr) {
+struct maybe_item parse_cons_item(char ** text_ptr) {
     char * text = * text_ptr;
 
     switch (text[0]) {
         case '\0':
-            goto parse_error;
+            return nothing;
 
-        case '\'':
-            if (text[1] == '\0' || text[2] == '\0') goto parse_error;
-            if (text[1] == '\'' || text[2] != '\'') goto parse_error;
+        case '#':
+            if (text[1] == '\0' || text[2] == '\0') {
+                throw_parse_error("end of text in character literal");
+            }
+            if (text[1] != '\\') throw_parse_error("bad character literal");
             * text_ptr += 3;
-            return ch(text[1]);
+            return just(ch(text[2]));
 
         case '0' ... '9':
             {
                 int num_digits = 0;
                 int temp = 0;
                 do temp = temp*10 + text[0] - '0';
-                while (num_digits+=1, isdigit(*++text));
+                while (num_digits+=1, isdigit(* ++text));
                 * text_ptr += num_digits;
-                return num(temp);
+                return just(num(temp));
             }
 
         case '(':
-            * text_ptr += 1;
+            {
+                * text_ptr += 1;
 
-            skip_space(text_ptr);
-            return parse_tail_cons(text_ptr);
+                skip_space(text_ptr);
+                if (** text_ptr == ')') {
+                    * text_ptr += 1;
+                    return just(nil);
+                }
+
+                struct maybe_item maybe_head = parse_cons_item(text_ptr);
+                if (! maybe_head.present) throw_parse_error("expected item");
+
+                skip_space(text_ptr);
+                struct item tail = parse_tail_cons(text_ptr);
+
+                skip_space(text_ptr);
+                if (** text_ptr != ')') throw_parse_error("expected )");
+                else * text_ptr += 1;
+
+                return just(cons(maybe_head.v, tail));
+            }
 
         case ')':
-            goto parse_error;
+            return nothing;
 
         case '.':
-            goto parse_error;
+            return nothing;
 
         default:   // anything else is a symbol
-            {
+            if (symbol_char(* text)) {
                 char * cur = text;
-                for (char c = * cur ; c != '\0' && c != '(' && c != ')' && ! isspace(c) ; c = * cur++);
-                * text_ptr += cur - text;
-                return sym_n(text, cur - text - 1);
+                for (char c = * cur ; symbol_char(c) ; c = * cur++) {}
+                int length = cur - text - 1;
+                * text_ptr += length;
+                return just(sym_n(text, length));
             }
+            else return nothing;
     }
-
-parse_error:
-    longjmp(abort_parse, 1);
 }
 
 struct item parse_tail_cons(char ** text_ptr) {
-    if (** text_ptr == ')') {
+    if (** text_ptr == '.') {
         * text_ptr += 1;
-        return nil;
-    }
-    else if (** text_ptr == '.') {
-        * text_ptr += 1;
+
         skip_space(text_ptr);
-        return parse_cons_item(text_ptr);
+        struct maybe_item temp = parse_cons_item(text_ptr);
+        if (! temp.present) throw_parse_error("expected item");
+        else return temp.v;
     }
 
-    skip_space(text_ptr);
-    struct item head = parse_cons_item(text_ptr);
+    //skip_space(text_ptr);
+    struct maybe_item maybe_head = parse_cons_item(text_ptr);
+    if (! maybe_head.present) return nil;
+
     skip_space(text_ptr);
     struct item tail = parse_tail_cons(text_ptr);
-    struct item cell = cons(head, tail);
-    return cell;
+
+    return cons(maybe_head.v, tail);
 }
 
-struct item parse(char * line) {
+struct maybe_item parse(char * line) {
     if (setjmp(abort_parse)) {
         printf("parse error\n");
-        return nil;
+        return nothing;
     }
     else {
         skip_space(& line);
-        struct item parsed_value = parse_cons_item(& line);
-        return parsed_value;
+        struct maybe_item temp = parse_cons_item(& line);
+
+        skip_space(& line);
+        if (* line) {
+            printf("unexpected %c\nparse error\n", * line);
+            return nothing;
+        }
+
+        return temp;
     }
 }
 
@@ -619,7 +683,7 @@ struct action compile(struct cons * tree) {
 //TODO
 }
 
-void rep() {
+void repl() {
     data_stack_mem = calloc(STACK_SIZE, sizeof(* data_sp));
     if (! data_stack_mem) exit(1);
     data_sp = data_stack_mem + STACK_SIZE-1;
@@ -628,61 +692,39 @@ void rep() {
     if (! call_stack_mem) exit(2);
     call_sp = call_stack_mem + STACK_SIZE-1;
 
-    char * line = readline("deux> ");
-    struct item tree = parse(line);
-    //struct action assemble_opcodes = compile(tree);
-    //struct action execute_program = direct_threaded(assemble_opcodes);
-    //direct_threaded(execute_program);
+    using_history();
 
-    //free_action(assemble_opcodes);
-    //free_action(execute_program);
-    free_cons_item(tree);
-    free(line);
+    char * line;
+    while (line = readline("deux> ")) {
+        if (* line) add_history(line);
+
+        struct maybe_item maybe_tree = parse(line);
+        if (maybe_tree.present) {
+            print_cons_item(maybe_tree.v); putchar('\n');
+        }
+
+        //struct action assemble_opcodes = compile(tree);
+        //struct action execute_program = direct_threaded(assemble_opcodes);
+        //direct_threaded(execute_program);
+
+        //free_action(assemble_opcodes);
+        //free_action(execute_program);
+        free_cons_item(maybe_tree.v);
+        free(line);
+    }
+    putchar('\n');
+
     free(call_stack_mem);
     free(data_stack_mem);
 }
 
 int main(int argc, char * argv[]) {
-    //rep();
-    //print_stack();
-
     /*
-    struct item x = cons(sym("Hello,"), sym("World!"));
+    struct item x = cons(sym("a"), cons(nil, cons(sym("b"), nil)));
     print_cons_item(x); putchar('\n');
     free_cons_item(x);
     */
 
-    struct item x;
-
-    x = parse(" 42");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("'q'");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("hello");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse(" (   )");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("(1 2 3)");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("('a' . 'b')");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("(Hello 42 . 'x')");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-
-    x = parse("(Hello, . World!)");
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
+    repl();
+    //print_stack();
 }
