@@ -10,12 +10,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#ifdef TRACE
-#define TR(X) printf("%d: %x\n", __LINE__, X);
-#else
-#define TR(X)
-#endif
-
 enum opcodes {
     STOP=0,
     NEXT,
@@ -198,7 +192,6 @@ struct action direct_threaded(struct action action) {
     ip = program;
 
 next:
-    TR(ip)
     goto ** (ip++);
 next_end:
 
@@ -206,21 +199,18 @@ dup:
     data_sp[0] = data_sp[1];
     data_sp -= 1;
 dup_end:
-    TR(ip)
     goto ** (ip++);
 
 over:
     data_sp[0] = data_sp[2];
     data_sp -= 1;
 over_end:
-    TR(ip)
     goto ** (ip++);
 
 pick:
     temp = data_sp[2];
     data_sp[1] = data_sp[temp];
 pick_end:
-    TR(ip)
     goto ** (ip++);
 
 swap:
@@ -228,7 +218,6 @@ swap:
     data_sp[1] = data_sp[2];
     data_sp[2] = data_sp[temp];
 swap_end:
-    TR(ip)
     goto ** (ip++);
 
 rot:
@@ -237,20 +226,17 @@ rot:
     data_sp[2] = data_sp[3];
     data_sp[3] = data_sp[temp];
 rot_end:
-    TR(ip)
     goto ** (ip++);
 
 drop:
     data_sp += 1;
 drop_end:
-    TR(ip)
     goto ** (ip++);
 
 skipif:
     temp = data_sp[1];
     data_sp += 1;
     if (temp) ip += 1;
-    TR(ip)
     goto ** (ip++);
 skipif_end:
 
@@ -258,7 +244,6 @@ fwd:
     temp = data_sp[1];
     data_sp += 1;
     ip += temp;
-    TR(ip)
     goto ** (ip++);
 fwd_end:
 
@@ -266,7 +251,6 @@ rew:
     temp = data_sp[1];
     data_sp += 1;
     ip -= temp;
-    TR(ip)
     goto ** (ip++);
 rew_end:
 
@@ -278,90 +262,77 @@ zero:
     data_sp[0] = 0;
     data_sp -= 1;
 zero_end:
-    TR(ip)
     goto ** (ip++);
 
 one:
     data_sp[0] = 1;
     data_sp -= 1;
 one_end:
-    TR(ip)
     goto ** (ip++);
 
 negone:
     data_sp[0] = -1;
     data_sp -= 1;
 negone_end:
-    TR(ip)
     goto ** (ip++);
 
 lit:
     data_sp[0] = (uint32_t) * ip++;
     data_sp -= 1;
 lit_end:
-    TR(ip)
     goto ** (ip++);
 
 add:
     data_sp[2] += data_sp[1];
     data_sp += 1;
 add_end:
-    TR(ip)
     goto ** (ip++);
 
 mul:
     data_sp[2] *= data_sp[1];
     data_sp += 1;
 mul_end:
-    TR(ip)
     goto ** (ip++);
 
 and:
     data_sp[2] &= data_sp[1];
     data_sp += 1;
 and_end:
-    TR(ip)
     goto ** (ip++);
 
 or:
     data_sp[2] |= data_sp[1];
     data_sp += 1;
 or_end:
-    TR(ip)
     goto ** (ip++);
 
 xor:
     data_sp[2] ^= data_sp[1];
     data_sp += 1;
 xor_end:
-    TR(ip)
     goto ** (ip++);
 
 rshift:
     data_sp[2] >>= data_sp[1];
     data_sp += 1;
 rshift_end:
-    TR(ip)
     goto ** (ip++);
 
 lshift:
     data_sp[2] <<= data_sp[1];
     data_sp += 1;
 lshift_end:
-    TR(ip)
     goto ** (ip++);
 
 debug_writehex:
     printf("%x\n", data_sp[1]);
     data_sp += 1;
 debug_writehex_end:
-    TR(ip)
     goto ** (ip++);
 
 debug_show_stack:
     print_stack();
 debug_show_stack_end:
-    TR(ip)
     goto ** (ip++);
 }
 
@@ -400,23 +371,6 @@ struct trie_node {
 
 struct trie_node symbols = {};
 
-void * get_symbol_ref(char * name) {
-    struct trie_node * node = & symbols;
-
-    for (int n=0 ; name[n] ; n += 1) {
-        struct trie_node * next_node = node->child[name[n]];
-        if (! next_node) {
-            next_node = calloc(1, sizeof(struct trie_node));
-            next_node->name = calloc(n+2, sizeof(char));
-            memmove(next_node->name, name, n+1);
-            node->child[name[n]] = next_node;
-        }
-        node = next_node;
-    }
-
-    return (void *) node;
-}
-
 void * get_symbol_ref_n(char * name, int length) {
     struct trie_node * node = & symbols;
 
@@ -432,6 +386,10 @@ void * get_symbol_ref_n(char * name, int length) {
     }
 
     return (void *) node;
+}
+
+void * get_symbol_ref(char * name) {
+    return get_symbol_ref_n(name, strlen(name));
 }
 
 // end symbol trie
@@ -537,6 +495,8 @@ void free_cons_item(struct item item) {
 }
 
 // end cons tree
+
+// begin parse
 
 jmp_buf abort_parse;
 
@@ -679,6 +639,8 @@ struct maybe_item parse(char * line) {
     }
 }
 
+// end parse
+
 struct action compile(struct cons * tree) {
 //TODO
 }
@@ -709,6 +671,7 @@ void repl() {
 
         //free_action(assemble_opcodes);
         //free_action(execute_program);
+
         free_cons_item(maybe_tree.v);
         free(line);
     }
@@ -719,12 +682,5 @@ void repl() {
 }
 
 int main(int argc, char * argv[]) {
-    /*
-    struct item x = cons(sym("a"), cons(nil, cons(sym("b"), nil)));
-    print_cons_item(x); putchar('\n');
-    free_cons_item(x);
-    */
-
     repl();
-    //print_stack();
 }
