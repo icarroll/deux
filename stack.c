@@ -10,6 +10,80 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+void die(char * message) {
+    printf("%s\n", message);
+    exit(1);
+}
+
+// memory management
+
+const int alignment = 8;
+
+struct heap {
+    void * memory;
+    void * end;
+    void * next;
+};
+
+enum layout {
+    no_ptr_layout= 0,
+    all_ptr_layout=-1,
+    cons_layout=-2,
+};
+
+struct block_header {
+    void * forward_ptr;
+    bool marked;
+    enum layout layout;
+    int size;
+};
+
+struct block_header * root;
+
+int round_to(int unit, int amount) {
+    return ((amount - 1) / unit + 1) * unit;
+}
+
+void make_heap(struct heap * heap, int size) {
+    int rounded_size = round_to(getpagesize(), size);
+
+    void * memory = mmap(NULL, rounded_size, PROT_READ | PROT_WRITE,
+                         MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (! memory) die("can't create heap");
+
+    heap->memory = memory;
+    heap->end = memory + rounded_size;
+    heap->next = memory;
+}
+
+void * allocate_in(struct heap heap, int size, bool layout) {
+    if (size < 1) return NULL;
+
+    if (layout != no_ptr_layout) size = round_to(sizeof(void *), size);
+    int entire_size = round_to(alignment, sizeof(struct block_header) + size);
+
+    void * new_next = heap.next + entire_size;
+    if (new_next > heap.end) return NULL; //TODO attempt collection
+
+    struct block_header * header = (struct block_header *) heap.next;
+    header->forward_ptr = NULL;
+    header->marked = false;
+    header->layout = layout;
+    header->size = size;
+
+    void * data_ptr = (void *) header + sizeof(struct block_header);
+    int data_size = entire_size - sizeof(struct block_header);
+    memset(data_ptr, 0, data_size);
+
+    heap.next = new_next;
+    return data_ptr;
+}
+
+void collect() {
+}
+
+// end memory management
+
 enum opcodes {
     STOP=0,
     NEXT,
