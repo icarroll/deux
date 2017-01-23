@@ -161,21 +161,6 @@ struct action {
     int length;
 } blank_action;
 
-/*
-void free_action(struct action act) {
-    switch (act.action) {
-        case EXECUTE:
-            free(act.to_execute);
-            break;
-        case ASSEMBLE:
-            free(act.to_assemble);
-            break;
-        default:
-            break;
-    }
-}
-*/
-
 void print_stack() {
     uint32_t * end = data_stack_mem + STACK_SIZE;
     for (uint32_t * p = data_sp+1 ; p < end ; p += 1) {
@@ -588,17 +573,6 @@ void print_tail_cons(struct cons * cell) {
     }
 }
 
-/*
-void free_cons_item(struct item item) {
-    if (item.tag != cons_tag) return;
-    if (! item.ptr) return;
-    struct cons * cell = item.ptr;
-    free_cons_item(cell->head);
-    free_cons_item(cell->tail);
-    free(cell);
-}
-*/
-
 // end cons tree
 
 // begin parse
@@ -774,16 +748,9 @@ void repl() {
         //struct action execute_program = direct_threaded(assemble_opcodes);
         //direct_threaded(execute_program);
 
-        //free_action(assemble_opcodes);
-        //free_action(execute_program);
-
-        // free_cons_item(maybe_tree.v);
         free(line);
     }
     putchar('\n');
-
-    // free(call_stack_mem);
-    // free(data_stack_mem);
 }
 
 int main(int argc, char * argv[]) {
