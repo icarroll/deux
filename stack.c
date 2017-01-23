@@ -17,7 +17,13 @@ void die(char * message) {
 
 // memory management
 
-const int alignment = 8;
+enum {
+    HEAP_SIZE=16*1024*1024,     // 16 MB
+    STACK_SIZE=1024*1024,       // 1 Mega-items
+    PROGRAM_SIZE=1024,          // 1 kB
+};
+
+const int ALIGNMENT = 8;
 
 struct heap {
     void * memory;
@@ -56,16 +62,16 @@ void make_heap(struct heap * heap, int size) {
     heap->next = memory;
 }
 
-void * allocate_in(struct heap heap, int size, bool layout) {
+void * allocate_in(struct heap * heap, int size, enum layout layout) {
     if (size < 1) return NULL;
 
     if (layout != no_ptr_layout) size = round_to(sizeof(void *), size);
-    int entire_size = round_to(alignment, sizeof(struct block_header) + size);
+    int entire_size = round_to(ALIGNMENT, sizeof(struct block_header) + size);
 
-    void * new_next = heap.next + entire_size;
-    if (new_next > heap.end) return NULL; //TODO attempt collection
+    void * new_next = heap->next + entire_size;
+    if (new_next > heap->end) return NULL; //TODO attempt collection
 
-    struct block_header * header = (struct block_header *) heap.next;
+    struct block_header * header = (struct block_header *) heap->next;
     header->forward_ptr = NULL;
     header->marked = false;
     header->layout = layout;
@@ -75,8 +81,26 @@ void * allocate_in(struct heap heap, int size, bool layout) {
     int data_size = entire_size - sizeof(struct block_header);
     memset(data_ptr, 0, data_size);
 
-    heap.next = new_next;
+    heap->next = new_next;
     return data_ptr;
+}
+
+struct heap heap;
+
+void init_heap() {
+    make_heap(& heap, HEAP_SIZE);
+}
+
+void * allocate(int size, enum layout layout) {
+    return allocate_in(& heap, size, layout);
+}
+
+void * allocate_noptr(int size) {
+    return allocate(size, no_ptr_layout);
+}
+
+void * allocate_allptr(int size) {
+    return allocate(size, all_ptr_layout);
 }
 
 void collect() {
@@ -112,11 +136,6 @@ enum opcodes {
     num_opcodes
 };
 
-enum {
-    STACK_SIZE=1024*1024,
-    PROGRAM_SIZE=1024,
-};
-
 uint32_t * data_stack_mem;
 uint32_t * data_sp;
 void ** call_stack_mem;
@@ -142,6 +161,7 @@ struct action {
     int length;
 } blank_action;
 
+/*
 void free_action(struct action act) {
     switch (act.action) {
         case EXECUTE:
@@ -154,6 +174,7 @@ void free_action(struct action act) {
             break;
     }
 }
+*/
 
 void print_stack() {
     uint32_t * end = data_stack_mem + STACK_SIZE;
@@ -218,10 +239,10 @@ struct action direct_threaded(struct action action) {
         if (action.action == ASSEMBLE) {
             struct action new_action = {
                 EXECUTE,
-                calloc(PROGRAM_SIZE, sizeof(void *)),
+                allocate_noptr(PROGRAM_SIZE),
                 PROGRAM_SIZE
             };
-            if (! new_action.to_execute) exit(3);
+            if (! new_action.to_execute) die("can't allocate program");
 
             for (int ix=0 ; ix < action.length ; ix += 1) {
                 enum opcodes op = action.to_assemble[ix];
@@ -411,16 +432,16 @@ debug_show_stack_end:
 }
 
 void run() {
-    data_stack_mem = calloc(STACK_SIZE, sizeof(* data_sp));
-    if (! data_stack_mem) exit(1);
+    data_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* data_sp));
+    if (! data_stack_mem) die("can't allocate data stack");
     data_sp = data_stack_mem + STACK_SIZE-1;
 
-    call_stack_mem = calloc(STACK_SIZE, sizeof(* call_sp));
-    if (! call_stack_mem) exit(2);
+    call_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* call_sp));
+    if (! call_stack_mem) die("can't allocate call stack");
     call_sp = call_stack_mem + STACK_SIZE-1;
 
-    program = calloc(PROGRAM_SIZE, sizeof(void *));
-    if (! program) exit(3);
+    program = allocate_noptr(PROGRAM_SIZE);
+    if (! program) die("can't allocate program");
 
     enum opcodes source[] = {
         LIT, 5,
@@ -443,6 +464,10 @@ struct trie_node {
     struct trie_node * child[256];
 };
 
+void * allocate_trie_node() {
+    return allocate_allptr(sizeof(struct trie_node));
+}
+
 struct trie_node symbols = {};
 
 void * get_symbol_ref_n(char * name, int length) {
@@ -451,8 +476,8 @@ void * get_symbol_ref_n(char * name, int length) {
     for (int n=0 ; n < length ; n += 1) {
         struct trie_node * next_node = node->child[name[n]];
         if (! next_node) {
-            next_node = calloc(1, sizeof(struct trie_node));
-            next_node->name = calloc(n+2, sizeof(char));
+            next_node = allocate_trie_node();
+            next_node->name = allocate_noptr(n+2);
             memmove(next_node->name, name, n+1);
             node->child[name[n]] = next_node;
         }
@@ -497,6 +522,10 @@ struct cons {
     struct item tail;
 };
 
+void * allocate_cons() {
+    return allocate(sizeof(struct cons), cons_layout);
+}
+
 struct item nil = {cons_tag, NULL};
 struct item ch(int c) {
     return (struct item) {char_tag, (void *) c};
@@ -511,7 +540,7 @@ struct item sym_n(char * name, int length) {
     return (struct item) {sym_tag, (void *) get_symbol_ref_n(name, length)};
 }
 struct item cons(struct item head, struct item tail) {
-    struct cons * cell = malloc(sizeof(struct cons));
+    struct cons * cell = allocate_cons();
     cell->head = head;
     cell->tail = tail;
     return (struct item) {cons_tag, cell};
@@ -559,6 +588,7 @@ void print_tail_cons(struct cons * cell) {
     }
 }
 
+/*
 void free_cons_item(struct item item) {
     if (item.tag != cons_tag) return;
     if (! item.ptr) return;
@@ -567,6 +597,7 @@ void free_cons_item(struct item item) {
     free_cons_item(cell->tail);
     free(cell);
 }
+*/
 
 // end cons tree
 
@@ -720,12 +751,12 @@ struct action compile(struct cons * tree) {
 }
 
 void repl() {
-    data_stack_mem = calloc(STACK_SIZE, sizeof(* data_sp));
-    if (! data_stack_mem) exit(1);
+    data_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* data_sp));
+    if (! data_stack_mem) die("can't allocate data stack");
     data_sp = data_stack_mem + STACK_SIZE-1;
 
-    call_stack_mem = calloc(STACK_SIZE, sizeof(* call_sp));
-    if (! call_stack_mem) exit(2);
+    call_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* call_sp));
+    if (! call_stack_mem) die("can't allocate call stack");
     call_sp = call_stack_mem + STACK_SIZE-1;
 
     using_history();
@@ -746,15 +777,16 @@ void repl() {
         //free_action(assemble_opcodes);
         //free_action(execute_program);
 
-        free_cons_item(maybe_tree.v);
+        // free_cons_item(maybe_tree.v);
         free(line);
     }
     putchar('\n');
 
-    free(call_stack_mem);
-    free(data_stack_mem);
+    // free(call_stack_mem);
+    // free(data_stack_mem);
 }
 
 int main(int argc, char * argv[]) {
+    init_heap();
     repl();
 }
