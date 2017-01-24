@@ -10,44 +10,208 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-void die(char * message) {
-    printf("%s\n", message);
-    exit(1);
-}
+#include "stack.h"
 
 // memory management
 
-enum {
-    HEAP_SIZE=16*1024*1024,     // 16 MB
-    STACK_SIZE=1024*1024,       // 1 Mega-items
-    PROGRAM_SIZE=1024,          // 1 kB
-};
+struct block_header * get_header(void * block_ptr) {
+    return (struct block_header *) (block_ptr - hdr_sz);
+}
 
-const int ALIGNMENT = 8;
+void mark_in(struct heap * heap) {
+    void ** block = heap->root_block;
+    get_header(block)->marked = true;
 
-struct heap {
-    void * memory;
-    void * end;
-    void * next;
-};
+    // trace block graph
+    while (block) {
+        switch (get_header(block)->layout) {
+        case no_ptr_layout:
+            break;
+        case all_ptr_layout:
+            // follow non-zero pointers in block
+            for (void ** candidate = (void **) block
+                 ; candidate < (void **) (block + get_header(block)->size)
+                 ; candidate += 1) {
+                if (* candidate) {
+                    struct block_header * header = get_header(* candidate);
+                    if (! header->marked) {
+                        header->marked = true;
+                        // add block to list
+                        header->link_ptr = get_header(block)->link_ptr;
+                        get_header(block)->link_ptr = * candidate;
+                    }
+                }
+            }
+            break;
+        case cons_layout:
+            {
+                // in head and tail, follow non-zero pointers
+                struct cons * cell = (struct cons *) block;
+                if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
+                    struct block_header * header = get_header(cell->head.ptr);
+                    if (! header->marked) {
+                        header->marked = true;
+                        // add block to list
+                        header->link_ptr = get_header(block)->link_ptr;
+                        get_header(block)->link_ptr = cell->head.ptr;
+                    }
+                }
+                if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
+                    struct block_header * header = get_header(cell->tail.ptr);
+                    if (! header->marked) {
+                        header->marked = true;
+                        // add block to list
+                        header->link_ptr = get_header(block)->link_ptr;
+                        get_header(block)->link_ptr = cell->tail.ptr;
+                    }
+                }
+            }
+            break;
+        default:
+            die("unhandled block layout");
+        }
 
-enum layout {
-    no_ptr_layout= 0,
-    all_ptr_layout=-1,
-    cons_layout=-2,
-};
+        block = get_header(block)->link_ptr;
+    }
+}
 
-struct block_header {
-    void * forward_ptr;
-    bool marked;
-    enum layout layout;
-    int size;
-};
+void * following_block(void * block) {
+    return block + get_header(block)->size + hdr_sz;
+}
 
-struct block_header * root;
+void * compute_forward_addrs_in(struct heap * heap) {
+    void * next_free_addr = heap->memory;
+    for (void * block=heap->memory + hdr_sz
+         ; block < heap->next
+         ; block = following_block(block)) {
+        struct block_header * header = get_header(block);
+        if (header->marked) {
+            header->link_ptr = next_free_addr;
+            next_free_addr += hdr_sz + header->size;
+        }
+    }
+
+    return next_free_addr;
+}
+
+void update_pointers_in(struct heap * heap) {
+    // scan over heap
+    for (void * block=heap->memory + hdr_sz
+         ; block < heap->next
+         ; block = following_block(block)) {
+        struct block_header * header = get_header(block);
+        if (! header->marked) continue;   // skip unmarked blocks
+
+        switch (header->layout) {
+        case no_ptr_layout:
+            break;
+        case all_ptr_layout:
+            // scan over pointers in block
+            for (void ** candidate = (void **) block
+                 ; candidate < (void **) (block + header->size)
+                 ; candidate += 1) {
+                // forward any non-zero pointers
+                if (* candidate) {
+                    * candidate = get_header(* candidate)->link_ptr;
+                }
+            }
+            break;
+        case cons_layout:
+            {
+                // in head and tail, forward non-zero pointers
+                struct cons * cell = (struct cons *) block;
+                if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
+                    cell->head.ptr = get_header(cell->head.ptr)->link_ptr;
+                }
+                if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
+                    cell->tail.ptr = get_header(cell->tail.ptr)->link_ptr;
+                }
+            }
+            break;
+        default:
+            die("unhandled block layout");
+        }
+    }
+}
+
+void compact_in(struct heap * heap) {
+    for (void * block=heap->memory + hdr_sz
+         ; block < heap->next
+         ; block = following_block(block)) {
+        struct block_header * header = get_header(block);
+        if (header->marked) {
+            struct block_header * dest_header;
+            dest_header = (struct block_header *) (header->link_ptr - hdr_sz);
+            memmove(dest_header, header, hdr_sz + header->size);
+
+            dest_header->link_ptr = NULL;
+            dest_header->marked = false;
+        }
+    }
+}
+
+void collect_in(struct heap * heap) {
+    mark_in(heap);
+    void * new_next = compute_forward_addrs_in(heap);
+    void ** new_root = get_header(heap->root_block)->link_ptr;
+    update_pointers_in(heap);
+    compact_in(heap);
+
+    heap->next = new_next;
+    heap->root_block = new_root;
+}
 
 int round_to(int unit, int amount) {
     return ((amount - 1) / unit + 1) * unit;
+}
+
+void * allocate_in(struct heap * heap, int size, enum layout layout) {
+    if (size < 1) return NULL;
+
+    size = round_to(sizeof(void *), size);
+    int entire_size = round_to(ALIGNMENT, hdr_sz + size);
+
+    void * new_next = heap->next + entire_size;
+    if (new_next > heap->end) {
+        collect_in(heap);
+        new_next = heap->next + entire_size;
+        if (new_next > heap->end) {
+            return NULL;
+        }
+    }
+
+    struct block_header * header = (struct block_header *) heap->next;
+    header->link_ptr = NULL;
+    header->marked = false;
+    header->layout = layout;
+    header->size = size;
+
+    int data_size = entire_size - hdr_sz;
+    memset(header->data, 0, data_size);
+
+    heap->next = new_next;
+    return header->data;
+}
+
+void add_root_in(struct heap * heap, void * new_root_ptr) {
+    void ** root_block = heap->root_block;
+
+    void ** block_end = root_block + get_header(root_block)->size;
+
+    void ** candidate;
+    for (candidate = root_block ; candidate < block_end ; candidate += 1) {
+        if (* candidate == NULL) {
+            * candidate = new_root_ptr;
+            return;
+        }
+    }
+
+    void ** new_block = allocate_in(heap, ROOT_BLOCK_SIZE, all_ptr_layout);
+    if (! new_block) die("can't allocate root block");
+
+    new_block[0] = root_block;
+    new_block[1] = new_root_ptr;
+    heap->root_block = new_block;
 }
 
 void make_heap(struct heap * heap, int size) {
@@ -60,36 +224,12 @@ void make_heap(struct heap * heap, int size) {
     heap->memory = memory;
     heap->end = memory + rounded_size;
     heap->next = memory;
-}
 
-void * allocate_in(struct heap * heap, int size, enum layout layout) {
-    if (size < 1) return NULL;
-
-    if (layout != no_ptr_layout) size = round_to(sizeof(void *), size);
-    int entire_size = round_to(ALIGNMENT, sizeof(struct block_header) + size);
-
-    void * new_next = heap->next + entire_size;
-    if (new_next > heap->end) return NULL; //TODO attempt collection
-
-    struct block_header * header = (struct block_header *) heap->next;
-    header->forward_ptr = NULL;
-    header->marked = false;
-    header->layout = layout;
-    header->size = size;
-
-    void * data_ptr = (void *) header + sizeof(struct block_header);
-    int data_size = entire_size - sizeof(struct block_header);
-    memset(data_ptr, 0, data_size);
-
-    heap->next = new_next;
-    return data_ptr;
+    heap->root_block = allocate_in(heap, ROOT_BLOCK_SIZE * sizeof(void *), all_ptr_layout);
+    if (! heap->root_block) die("can't allocate root block");
 }
 
 struct heap heap;
-
-void init_heap() {
-    make_heap(& heap, HEAP_SIZE);
-}
 
 void * allocate(int size, enum layout layout) {
     return allocate_in(& heap, size, layout);
@@ -103,7 +243,12 @@ void * allocate_allptr(int size) {
     return allocate(size, all_ptr_layout);
 }
 
-void collect() {
+void init_heap() {
+    make_heap(& heap, HEAP_SIZE);
+}
+
+void add_root(void * new_root) {
+    add_root_in(& heap, new_root);
 }
 
 // end memory management
@@ -444,24 +589,25 @@ void run() {
 
 // begin symbol trie
 
-struct trie_node {
-    char * name;
-    struct trie_node * child[256];
-};
-
-void * allocate_trie_node() {
-    return allocate_allptr(sizeof(struct trie_node));
+void * allocate_symbol_intern_node() {
+    void * temp = allocate_allptr(sizeof(struct symbol_intern_node));
+    if (! temp) die("can't allocate symbol node");
+    return temp;
 }
 
-struct trie_node symbols = {};
+struct symbol_intern_node * symbols;
 
 void * get_symbol_ref_n(char * name, int length) {
-    struct trie_node * node = & symbols;
+    if (! symbols) {
+        symbols = allocate_symbol_intern_node();
+        add_root(symbols);
+    }
+    struct symbol_intern_node * node = symbols;
 
     for (int n=0 ; n < length ; n += 1) {
-        struct trie_node * next_node = node->child[name[n]];
+        struct symbol_intern_node * next_node = node->child[name[n]];
         if (! next_node) {
-            next_node = allocate_trie_node();
+            next_node = allocate_symbol_intern_node();
             next_node->name = allocate_noptr(n+2);
             memmove(next_node->name, name, n+1);
             node->child[name[n]] = next_node;
@@ -480,32 +626,10 @@ void * get_symbol_ref(char * name) {
 
 // begin cons tree
 
-enum cons_tag {
-    cons_tag = 0,
-    char_tag,
-    int_tag,
-    sym_tag,
-};
-
-struct item {
-    enum cons_tag tag;
-    void * ptr;
-};
-
-struct maybe_item {
-    bool present;
-    struct item v;
-};
-
 struct maybe_item nothing = {false};
 struct maybe_item just(struct item value) {
     return (struct maybe_item) {true, value};
 }
-
-struct cons {
-    struct item head;
-    struct item tail;
-};
 
 void * allocate_cons() {
     return allocate(sizeof(struct cons), cons_layout);
@@ -531,8 +655,6 @@ struct item cons(struct item head, struct item tail) {
     return (struct item) {cons_tag, cell};
 }
 
-void print_tail_cons(struct cons * cell);
-
 void print_cons_item(struct item item) {
     struct cons * cell = item.ptr;
 
@@ -544,7 +666,7 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "%u", (unsigned int) item.ptr);
             break;
         case sym_tag:
-            fprintf(stdout, "%s", ((struct trie_node *) item.ptr)->name);
+            fprintf(stdout, "%s", ((struct symbol_intern_node *) item.ptr)->name);
             break;
         case cons_tag:
             fputc('(', stdout);
@@ -719,6 +841,11 @@ struct maybe_item parse(char * line) {
 }
 
 // end parse
+
+void die(char * message) {
+    printf("%s\n", message);
+    exit(1);
+}
 
 struct action compile(struct cons * tree) {
 //TODO
