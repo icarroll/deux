@@ -19,6 +19,65 @@ struct block_header * get_header(void * block_ptr) {
 }
 
 void mark_in(struct heap * heap) {
+    struct block_header * next_header = get_header(heap->root_block);
+    struct block_header * last_header = next_header;
+
+    next_header->link_ptr = NULL;
+    next_header->marked = true;
+
+    while (next_header) {
+        struct block_header * cur_header = next_header;
+
+        switch (cur_header->layout) {
+        case no_ptr_layout:
+            break;
+        case all_ptr_layout:
+            for (void ** candidate = cur_header->data
+                 ; candidate < (void **) (cur_header->data + cur_header->size)
+                 ; candidate += 1) {
+                if (* candidate) {
+                    struct block_header * header = get_header(* candidate);
+                    if (! header->marked) {
+                        header->link_ptr = NULL;
+                        header->marked = true;
+                        last_header->link_ptr = header;
+                        last_header = header;
+                    }
+                }
+            }
+            break;
+        case cons_layout:
+            {
+                struct cons * cell = (struct cons *) cur_header->data;
+                if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
+                    struct block_header * header = get_header(cell->head.ptr);
+                    if (! header->marked) {
+                        header->link_ptr = NULL;
+                        header->marked = true;
+                        last_header->link_ptr = header;
+                        last_header = header;
+                    }
+                }
+                if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
+                    struct block_header * header = get_header(cell->tail.ptr);
+                    if (! header->marked) {
+                        header->link_ptr = NULL;
+                        header->marked = true;
+                        last_header->link_ptr = header;
+                        last_header = header;
+                    }
+                }
+            }
+            break;
+        default:
+            die("unhandled block layout");
+        }
+
+        next_header = next_header->link_ptr;
+    }
+}
+
+void OLD_mark_in(struct heap * heap) {
     void ** block = heap->root_block;
     get_header(block)->marked = true;
 
@@ -150,6 +209,11 @@ void compact_in(struct heap * heap) {
     }
 }
 
+//TODO
+// display of heap blocks
+// check heap for errors
+// test allocation and collection
+
 void collect_in(struct heap * heap) {
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
@@ -168,7 +232,7 @@ int round_to(int unit, int amount) {
 void * allocate_in(struct heap * heap, int size, enum layout layout) {
     if (size < 1) return NULL;
 
-    size = round_to(sizeof(void *), size);
+    size = round_to(ALIGNMENT, size);
     int entire_size = round_to(ALIGNMENT, hdr_sz + size);
 
     void * new_next = heap->next + entire_size;
@@ -181,7 +245,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     }
 
     struct block_header * header = (struct block_header *) heap->next;
-    header->link_ptr = NULL;
+    header->link_ptr = 0xdeadbeef;
     header->marked = false;
     header->layout = layout;
     header->size = size;
@@ -190,6 +254,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     memset(header->data, 0, data_size);
 
     heap->next = new_next;
+    printf("allocating block %x size=%d\n", header->data, data_size);
     return header->data;
 }
 
@@ -231,6 +296,10 @@ void make_heap(struct heap * heap, int size) {
 
 struct heap heap;
 
+void collect() {
+    collect_in(& heap);
+}
+
 void * allocate(int size, enum layout layout) {
     return allocate_in(& heap, size, layout);
 }
@@ -252,6 +321,93 @@ void add_root(void * new_root) {
 }
 
 // end memory management
+
+// heap display
+
+char * bool_str(bool val) {
+    return val ? "true" : "false";
+}
+
+char * layout_str(enum layout val) {
+    switch (val) {
+    case no_ptr_layout:
+        return "noptr";
+    case all_ptr_layout:
+        return "allptr";
+    case cons_layout:
+        return "cons";
+    default:
+        return "unhandled";
+    }
+}
+
+char * cons_tag_str(enum cons_tag val) {
+    switch (val) {
+    case cons_tag:
+        return "cons";
+    case sym_tag:
+        return "sym";
+    case char_tag:
+        return "char";
+    case int_tag:
+        return "int";
+    default:
+        return "unhandled";
+    }
+}
+
+void print_heap_in(struct heap * heap) {
+    printf("memory=%x end=%x next=%x root_block=%x\n",
+           heap->memory, heap->end, heap->next, heap->root_block);
+    for (void * block=heap->memory + hdr_sz
+         ; block < heap->next
+         ; block = following_block(block)) {
+        struct block_header * header = get_header(block);
+        printf("%x: link=%x marked=%s layout=%s size=%d\n",
+               block, header->link_ptr, bool_str(header->marked),
+               layout_str(header->layout), header->size);
+
+        if (header->size <= 0) {
+            printf("size error\n");
+            break;
+        }
+
+        switch (header->layout) {
+        case no_ptr_layout:
+            break;
+        case all_ptr_layout:
+            // scan over pointers in block
+            for (void ** candidate = (void **) block
+                 ; candidate < (void **) (block + header->size)
+                 ; candidate += 1) {
+                // print any non-zero pointers
+                if (* candidate) {
+                    printf("    %x\n", * candidate);
+                }
+            }
+            break;
+        case cons_layout:
+            {
+                // print head and tail contents
+                struct cons * cell = (struct cons *) block;
+                printf("    %s=%x : %s=%x\n    ",
+                       cons_tag_str(cell->head.tag), cell->head.ptr,
+                       cons_tag_str(cell->tail.tag), cell->tail.ptr);
+                print_cons_item((struct item) {cons_tag, cell});
+                putchar('\n');
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void print_heap() {
+    print_heap_in(& heap);
+}
+
+// end heap display
 
 enum opcodes {
     STOP=0,
@@ -285,7 +441,8 @@ uint32_t * data_stack_mem;
 uint32_t * data_sp;
 void ** call_stack_mem;
 void ** call_sp;
-register void ** ip asm("r11"); //TODO does this work?
+//register void ** ip asm("r11"); //TODO does this work?
+void ** ip;
 void ** program;
 
 void * addr_of[num_opcodes];
@@ -666,7 +823,8 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "%u", (unsigned int) item.ptr);
             break;
         case sym_tag:
-            fprintf(stdout, "%s", ((struct symbol_intern_node *) item.ptr)->name);
+            fprintf(stdout, "%s",
+                    ((struct symbol_intern_node *) item.ptr)->name);
             break;
         case cons_tag:
             fputc('(', stdout);
@@ -876,6 +1034,8 @@ void repl() {
         //direct_threaded(execute_program);
 
         free(line);
+
+        print_heap();
     }
     putchar('\n');
 }
@@ -883,4 +1043,6 @@ void repl() {
 int main(int argc, char * argv[]) {
     init_heap();
     repl();
+    collect();
+    print_heap();
 }
