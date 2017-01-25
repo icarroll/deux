@@ -106,63 +106,6 @@ void mark_in(struct heap * heap) {
     }
 }
 
-void OLD_mark_in(struct heap * heap) {
-    void ** block = heap->root_block;
-    get_header(block)->marked = true;
-
-    // trace block graph
-    while (block) {
-        switch (get_header(block)->layout) {
-        case no_ptr_layout:
-            break;
-        case all_ptr_layout:
-            // follow non-zero pointers in block
-            for (void ** candidate = (void **) block
-                 ; candidate < (void **) (block + get_header(block)->size)
-                 ; candidate += 1) {
-                if (* candidate) {
-                    struct block_header * header = get_header(* candidate);
-                    if (! header->marked) {
-                        header->marked = true;
-                        // add block to list
-                        header->link_ptr = get_header(block)->link_ptr;
-                        get_header(block)->link_ptr = * candidate;
-                    }
-                }
-            }
-            break;
-        case cons_layout:
-            {
-                // in head and tail, follow non-zero pointers
-                struct cons * cell = (struct cons *) block;
-                if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
-                    struct block_header * header = get_header(cell->head.ptr);
-                    if (! header->marked) {
-                        header->marked = true;
-                        // add block to list
-                        header->link_ptr = get_header(block)->link_ptr;
-                        get_header(block)->link_ptr = cell->head.ptr;
-                    }
-                }
-                if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
-                    struct block_header * header = get_header(cell->tail.ptr);
-                    if (! header->marked) {
-                        header->marked = true;
-                        // add block to list
-                        header->link_ptr = get_header(block)->link_ptr;
-                        get_header(block)->link_ptr = cell->tail.ptr;
-                    }
-                }
-            }
-            break;
-        default:
-            die("unhandled block layout");
-        }
-
-        block = get_header(block)->link_ptr;
-    }
-}
-
 void * following_block(void * block) {
     return block + get_header(block)->size + hdr_sz;
 }
