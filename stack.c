@@ -18,6 +18,19 @@ struct block_header * get_header(void * block_ptr) {
     return (struct block_header *) (block_ptr - hdr_sz);
 }
 
+void print_block_header(struct block_header * header) {
+    printf("%x: link=%x marked=%s layout=%s size=%d\n",
+           header->data, header->link_ptr, bool_str(header->marked),
+           layout_str(header->layout), header->size);
+}
+
+void print_mark_list(struct block_header * header) {
+    while (header) {
+        print_block_header(header);
+        header = header->link_ptr;
+    }
+}
+
 void mark_in(struct heap * heap) {
     struct block_header * next_header = get_header(heap->root_block);
     struct block_header * last_header = next_header;
@@ -32,9 +45,18 @@ void mark_in(struct heap * heap) {
         case no_ptr_layout:
             break;
         case all_ptr_layout:
+            0;
+            void ** end = cur_header->data
+                          + cur_header->size / sizeof(* cur_header->data);
             for (void ** candidate = cur_header->data
-                 ; candidate < (void **) (cur_header->data + cur_header->size)
+                 ; candidate < end
                  ; candidate += 1) {
+                /*
+                printf("candidate=%x, * candidate=", candidate);
+                if (candidate) printf("%x\n", *candidate);
+                else printf("N/A\n");
+                */
+
                 if (* candidate) {
                     struct block_header * header = get_header(* candidate);
                     if (! header->marked) {
@@ -42,6 +64,8 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
+                        //printf("add block\n");
+                        //print_mark_list(next_header);
                     }
                 }
             }
@@ -56,6 +80,8 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
+                        //printf("add cons head\n");
+                        //print_mark_list(next_header);
                     }
                 }
                 if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
@@ -65,6 +91,8 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
+                        //printf("add cons tail\n");
+                        //print_mark_list(next_header);
                     }
                 }
             }
@@ -73,6 +101,7 @@ void mark_in(struct heap * heap) {
             die("unhandled block layout");
         }
 
+        //printf("remove list head\n");
         next_header = next_header->link_ptr;
     }
 }
@@ -171,7 +200,7 @@ void update_pointers_in(struct heap * heap) {
                  ; candidate += 1) {
                 // forward any non-zero pointers
                 if (* candidate) {
-                    * candidate = get_header(* candidate)->link_ptr;
+                    * candidate = get_header(* candidate)->link_ptr + hdr_sz;
                 }
             }
             break;
@@ -180,10 +209,10 @@ void update_pointers_in(struct heap * heap) {
                 // in head and tail, forward non-zero pointers
                 struct cons * cell = (struct cons *) block;
                 if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
-                    cell->head.ptr = get_header(cell->head.ptr)->link_ptr;
+                    cell->head.ptr = get_header(cell->head.ptr)->link_ptr + hdr_sz;
                 }
                 if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
-                    cell->tail.ptr = get_header(cell->tail.ptr)->link_ptr;
+                    cell->tail.ptr = get_header(cell->tail.ptr)->link_ptr + hdr_sz;
                 }
             }
             break;
@@ -200,7 +229,7 @@ void compact_in(struct heap * heap) {
         struct block_header * header = get_header(block);
         if (header->marked) {
             struct block_header * dest_header;
-            dest_header = (struct block_header *) (header->link_ptr - hdr_sz);
+            dest_header = (struct block_header *) (header->link_ptr);
             memmove(dest_header, header, hdr_sz + header->size);
 
             dest_header->link_ptr = NULL;
@@ -215,6 +244,7 @@ void compact_in(struct heap * heap) {
 // test allocation and collection
 
 void collect_in(struct heap * heap) {
+    printf("collecting...");
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
     void ** new_root = get_header(heap->root_block)->link_ptr;
@@ -223,6 +253,7 @@ void collect_in(struct heap * heap) {
 
     heap->next = new_next;
     heap->root_block = new_root;
+    printf(" done\n");
 }
 
 int round_to(int unit, int amount) {
@@ -245,7 +276,8 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     }
 
     struct block_header * header = (struct block_header *) heap->next;
-    header->link_ptr = 0xdeadbeef;
+    header->link_ptr = NULL;
+    //header->link_ptr = 0xdeadbeef;
     header->marked = false;
     header->layout = layout;
     header->size = size;
@@ -254,7 +286,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     memset(header->data, 0, data_size);
 
     heap->next = new_next;
-    printf("allocating block %x size=%d\n", header->data, data_size);
+    //printf("allocating block %x size=%d\n", header->data, data_size);
     return header->data;
 }
 
@@ -363,9 +395,7 @@ void print_heap_in(struct heap * heap) {
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
-        printf("%x: link=%x marked=%s layout=%s size=%d\n",
-               block, header->link_ptr, bool_str(header->marked),
-               layout_str(header->layout), header->size);
+        print_block_header(header);
 
         if (header->size <= 0) {
             printf("size error\n");
@@ -1035,7 +1065,7 @@ void repl() {
 
         free(line);
 
-        print_heap();
+        //print_heap();
     }
     putchar('\n');
 }
@@ -1044,5 +1074,5 @@ int main(int argc, char * argv[]) {
     init_heap();
     repl();
     collect();
-    print_heap();
+    //print_heap();
 }
