@@ -1,2 +1,5 @@
 *.sw?
 stack
+*.o
+*.d
+notes
