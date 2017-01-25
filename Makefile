@@ -23,7 +23,7 @@ clean:
 debug:
 	$(MAKE) -B debug_do
 
-debug_do: CFLAGS += -g
+debug_do: CFLAGS += -g -O0
 debug_do: all
 
 
