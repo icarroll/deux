@@ -2,11 +2,8 @@
 #define STACK_H
 
 enum {
-    //HEAP_SIZE=16*1024*1024,     // 16 MB
-    HEAP_SIZE=8*1024*1024+8*1024,
+    HEAP_SIZE=16*1024*1024,     // 16 MB
     ROOT_BLOCK_SIZE=16,         // 16 items
-    STACK_SIZE=1024*1024,       // 1 Mega-items
-    PROGRAM_SIZE=1024,          // 1 kB
 };
 
 static const int ALIGNMENT = 8;
@@ -32,11 +29,17 @@ struct block_header {
     void * data[];
 };
 
-const int hdr_sz = sizeof(struct block_header);
+static const int hdr_sz = sizeof(struct block_header);
 
 char * bool_str(bool val);
 
 char * layout_str(enum layout val);
+
+struct registers {
+    void ** code_block;
+    int instruction;
+    void ** data_block;
+};
 
 struct symbol_intern_node {
     char * name;

@@ -14,6 +14,8 @@
 
 // memory management
 
+struct registers registers;
+
 struct block_header * get_header(void * block_ptr) {
     return (struct block_header *) (block_ptr - hdr_sz);
 }
@@ -32,11 +34,24 @@ void print_mark_list(struct block_header * header) {
 }
 
 void mark_in(struct heap * heap) {
+    // mark roots and add to list
     struct block_header * next_header = heap->root_block;
-    struct block_header * last_header = next_header;
+    heap->root_block->marked = true;
+    struct block_header * last_header = heap->root_block;
 
-    next_header->link_ptr = NULL;
-    next_header->marked = true;
+    if (registers.code_block) {
+        last_header->link_ptr = registers.code_block;
+        last_header->marked = true;
+        last_header = last_header->link_ptr;
+    }
+
+    if (registers.data_block) {
+        last_header->link_ptr = registers.data_block;
+        last_header->marked = true;
+        last_header = last_header->link_ptr;
+    }
+
+    last_header->link_ptr = NULL;
 
     while (next_header) {
         struct block_header * cur_header = next_header;
@@ -51,12 +66,6 @@ void mark_in(struct heap * heap) {
             for (void ** candidate = cur_header->data
                  ; candidate < end
                  ; candidate += 1) {
-                /*
-                printf("candidate=%x, * candidate=", candidate);
-                if (candidate) printf("%x\n", *candidate);
-                else printf("N/A\n");
-                */
-
                 if (* candidate) {
                     struct block_header * header = get_header(* candidate);
                     if (! header->marked) {
@@ -64,8 +73,6 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
-                        //printf("add block\n");
-                        //print_mark_list(next_header);
                     }
                 }
             }
@@ -80,8 +87,6 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
-                        //printf("add cons head\n");
-                        //print_mark_list(next_header);
                     }
                 }
                 if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
@@ -91,8 +96,6 @@ void mark_in(struct heap * heap) {
                         header->marked = true;
                         last_header->link_ptr = header;
                         last_header = header;
-                        //printf("add cons tail\n");
-                        //print_mark_list(next_header);
                     }
                 }
             }
@@ -101,7 +104,6 @@ void mark_in(struct heap * heap) {
             die("unhandled block layout");
         }
 
-        //printf("remove list head\n");
         next_header = next_header->link_ptr;
     }
 }
@@ -152,10 +154,12 @@ void update_pointers_in(struct heap * heap) {
                 // in head and tail, forward non-zero pointers
                 struct cons * cell = (struct cons *) block;
                 if (is_ptr_tag(cell->head.tag) && cell->head.ptr) {
-                    cell->head.ptr = get_header(cell->head.ptr)->link_ptr + hdr_sz;
+                    cell->head.ptr = get_header(cell->head.ptr)->link_ptr
+                                     + hdr_sz;
                 }
                 if (is_ptr_tag(cell->tail.tag) && cell->tail.ptr) {
-                    cell->tail.ptr = get_header(cell->tail.ptr)->link_ptr + hdr_sz;
+                    cell->tail.ptr = get_header(cell->tail.ptr)->link_ptr
+                                     + hdr_sz;
                 }
             }
             break;
@@ -186,16 +190,28 @@ void compact_in(struct heap * heap) {
 // test allocation and collection
 
 void collect_in(struct heap * heap) {
-    //printf("collecting..."); fflush(stdout);
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
+
     struct block_header * new_root = heap->root_block->link_ptr;
+
+    struct block_header * new_code_block;
+    if (registers.code_block) {
+        new_code_block = get_header(registers.code_block)->link_ptr;
+    }
+
+    struct block_header * new_data_block;
+    if (registers.data_block) {
+        new_data_block = get_header(registers.data_block)->link_ptr;
+    }
+
     update_pointers_in(heap);
     compact_in(heap);
 
     heap->next = new_next;
     heap->root_block = new_root;
-    //printf(" done\n");
+    if (registers.code_block) registers.code_block = new_code_block->data;
+    if (registers.data_block) registers.data_block = new_data_block->data;
 }
 
 int round_to(int unit, int amount) {
@@ -219,7 +235,6 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
 
     struct block_header * header = (struct block_header *) heap->next;
     header->link_ptr = NULL;
-    //header->link_ptr = 0xdeadbeef;
     header->marked = false;
     header->layout = layout;
     header->size = size;
@@ -228,7 +243,6 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     memset(header->data, 0, data_size);
 
     heap->next = new_next;
-    //printf("allocating block %x size=%d\n", header->data, data_size);
     return header->data;
 }
 
@@ -383,237 +397,64 @@ void print_heap() {
 
 // end heap display
 
+// virtual machine
+
 enum opcodes {
     STOP=0,
-    NEXT,
-    DUP,
-    OVER,
-    PICK,
-    SWAP,
-    ROT,
-    DROP,
-    SKIPIF,
-    FWD,
-    REW,
-    ZERO,
-    ONE,
-    NEGONE,
-    LIT,
+    STORE,
     ADD,
+    /*
     MUL,
     AND,
     OR,
     XOR,
     RSHIFT,
     LSHIFT,
+    */
     DEBUG_WRITEHEX,
-    DEBUG_SHOW_STACK,
-    num_opcodes
 };
 
-uint32_t * data_stack_mem;
-uint32_t * data_sp;
-void ** call_stack_mem;
-void ** call_sp;
-//register void ** ip asm("r11"); //TODO does this work?
-void ** ip;
-void ** program;
-
-void * addr_of[num_opcodes];
-void * end_of[num_opcodes];
-
-enum action_type {
-    EXECUTE=0,
-    ASSEMBLE,
-    EXPERIMENT,
-};
-
-struct action {
-    enum action_type action;
-    union {
-        enum opcodes * to_assemble;
-        void * to_execute;
-    };
-    int length;
-} blank_action;
-
-void print_stack() {
-    uint32_t * end = data_stack_mem + STACK_SIZE;
-    for (uint32_t * p = data_sp+1 ; p < end ; p += 1) {
-        printf("%d ", * p);
-    }
-    printf("\n");
+void store(void ** block, int steps, int index, int value) {
+    if (steps == 0) block[index] = (void *) value;
+    else store(* block, steps-1, index, value);
 }
 
-struct action direct_threaded(struct action action) {
-    if (action.action) {
-        addr_of[STOP] = &&stop;
-        addr_of[NEXT] = &&next;
-        addr_of[DUP] = &&dup;
-        addr_of[OVER] = &&over;
-        addr_of[PICK] = &&pick;
-        addr_of[SWAP] = &&swap;
-        addr_of[ROT] = &&rot;
-        addr_of[DROP] = &&drop;
-        addr_of[SKIPIF] = &&skipif;
-        addr_of[FWD] = &&fwd;
-        addr_of[REW] = &&rew;
-        addr_of[ZERO] = &&zero;
-        addr_of[ONE] = &&one;
-        addr_of[NEGONE] = &&negone;
-        addr_of[LIT] = &&lit;
-        addr_of[ADD] = &&add;
-        addr_of[MUL] = &&mul;
-        addr_of[AND] = &&and;
-        addr_of[OR] = &&or;
-        addr_of[XOR] = &&xor;
-        addr_of[RSHIFT] = &&rshift;
-        addr_of[LSHIFT] = &&lshift;
-        addr_of[DEBUG_WRITEHEX] = &&debug_writehex;
-        addr_of[DEBUG_SHOW_STACK] = &&debug_show_stack;
+int get(void ** block, int steps, int index) {
+    if (steps == 0) return (int) block[index];
+    else return get(* block, steps-1, index);
+}
 
-        end_of[STOP] = &&stop_end;
-        end_of[NEXT] = &&next_end;
-        end_of[DUP] = &&dup_end;
-        end_of[OVER] = &&over_end;
-        end_of[PICK] = &&pick_end;
-        end_of[SWAP] = &&swap_end;
-        end_of[ROT] = &&rot_end;
-        end_of[DROP] = &&drop_end;
-        end_of[SKIPIF] = &&skipif_end;
-        end_of[FWD] = &&fwd_end;
-        end_of[REW] = &&rew_end;
-        end_of[ZERO] = &&zero_end;
-        end_of[ONE] = &&one_end;
-        end_of[NEGONE] = &&negone_end;
-        end_of[LIT] = &&lit_end;
-        end_of[ADD] = &&add_end;
-        end_of[MUL] = &&mul_end;
-        end_of[AND] = &&and_end;
-        end_of[OR] = &&or_end;
-        end_of[XOR] = &&xor_end;
-        end_of[RSHIFT] = &&rshift_end;
-        end_of[LSHIFT] = &&lshift_end;
-        end_of[DEBUG_WRITEHEX] = &&debug_writehex_end;
-        end_of[DEBUG_SHOW_STACK] = &&debug_show_stack_end;
+void run() {
+    while (true) {
+        int instruction = (int) registers.code_block[registers.instruction];
+        int opcode = instruction >> 24;
+        int argument = instruction & 0xffffff;
 
-        if (action.action == ASSEMBLE) {
-            struct action new_action = {
-                EXECUTE,
-                allocate_noptr(PROGRAM_SIZE),
-                PROGRAM_SIZE
-            };
-            if (! new_action.to_execute) die("can't allocate program");
+        int steps = argument >> 16;
+        int index = (argument >> 8) & 0xff;
+        int value = argument & 0xff;
 
-            for (int ix=0 ; ix < action.length ; ix += 1) {
-                enum opcodes op = action.to_assemble[ix];
-                program[ix] = addr_of[op];
-                if (op == LIT) {
-                    ix += 1;
-                    program[ix] = (void *) action.to_assemble[ix];
-                }
-            }
+        int temp;
 
-            return new_action;
-        }
-        else if (action.action == EXPERIMENT) {
-            void * subprogram = mmap(NULL, getpagesize(),
-                                     PROT_READ | PROT_WRITE,
-                                     MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-            void * at = subprogram;
-
-            ptrdiff_t one_length = &&one_end - &&one;
-            memmove(at, &&one, one_length); at += one_length;
-            memmove(at, &&one, one_length); at += one_length;
-            memmove(at, &&one, one_length); at += one_length;
-            memmove(at, &&one, one_length); at += one_length;
-            ptrdiff_t next_length = &&next_end - &&next;
-            memmove(at, &&next, next_length); at += next_length;
-
-            program[0] = subprogram;
-            program[1] = &&add;
-            program[2] = &&add;
-            program[3] = &&add;
-            program[4] = &&debug_writehex;
-            program[5] = &&stop;
-
-            mprotect(subprogram, getpagesize(), PROT_READ | PROT_EXEC);
-
-            return blank_action;
+        switch (opcode) {
+        case STOP:
+            return;
+        case STORE:
+            store(registers.data_block, steps, index, value);
+            break;
+        case ADD:
+            temp = get(registers.data_block, steps, index) + value;
+            store(registers.data_block, steps, index, temp);
+            break;
+        case DEBUG_WRITEHEX:
+            printf("%x\n", get(registers.data_block, steps, index));
+            break;
         }
     }
+}
 
-    uint32_t temp;
-
-    ip = program;
-
-next:
-    goto ** (ip++);
-next_end:
-
-dup:
-    data_sp[0] = data_sp[1];
-    data_sp -= 1;
-dup_end:
-    goto ** (ip++);
-
-over:
-    data_sp[0] = data_sp[2];
-    data_sp -= 1;
-over_end:
-    goto ** (ip++);
-
-pick:
-    temp = data_sp[2];
-    data_sp[1] = data_sp[temp];
-pick_end:
-    goto ** (ip++);
-
-swap:
-    temp = data_sp[1];
-    data_sp[1] = data_sp[2];
-    data_sp[2] = data_sp[temp];
-swap_end:
-    goto ** (ip++);
-
-rot:
-    temp = data_sp[1];
-    data_sp[1] = data_sp[2];
-    data_sp[2] = data_sp[3];
-    data_sp[3] = data_sp[temp];
-rot_end:
-    goto ** (ip++);
-
-drop:
-    data_sp += 1;
-drop_end:
-    goto ** (ip++);
-
-skipif:
-    temp = data_sp[1];
-    data_sp += 1;
-    if (temp) ip += 1;
-    goto ** (ip++);
-skipif_end:
-
-fwd:
-    temp = data_sp[1];
-    data_sp += 1;
-    ip += temp;
-    goto ** (ip++);
-fwd_end:
-
-rew:
-    temp = data_sp[1];
-    data_sp += 1;
-    ip -= temp;
-    goto ** (ip++);
-rew_end:
-
-stop:
-    return blank_action;
-stop_end:
-
+/*
+{
 zero:
     data_sp[0] = 0;
     data_sp -= 1;
@@ -685,38 +526,22 @@ debug_writehex:
     data_sp += 1;
 debug_writehex_end:
     goto ** (ip++);
-
-debug_show_stack:
-    print_stack();
-debug_show_stack_end:
-    goto ** (ip++);
 }
+*/
 
+/*
 void run() {
-    data_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* data_sp));
-    if (! data_stack_mem) die("can't allocate data stack");
-    data_sp = data_stack_mem + STACK_SIZE-1;
-
-    call_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* call_sp));
-    if (! call_stack_mem) die("can't allocate call stack");
-    call_sp = call_stack_mem + STACK_SIZE-1;
-
-    program = allocate_noptr(PROGRAM_SIZE);
-    if (! program) die("can't allocate program");
-
     enum opcodes source[] = {
         LIT, 5,
         LIT, 15,
         LIT, 47,
-        DEBUG_SHOW_STACK,
         STOP,
     };
     int source_length = sizeof(source) / sizeof(source[0]);
-
-    //direct_threaded(EXPERIMENT);
-    //direct_threaded(ASSEMBLE);
-    //direct_threaded(EXECUTE);
 }
+*/
+
+// end virtual machine
 
 // begin symbol trie
 
@@ -979,23 +804,15 @@ void die(char * message) {
     exit(1);
 }
 
-struct action compile(struct cons * tree) {
+void compile(struct cons * tree) {
 //TODO
 }
 
 void repl() {
-    data_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* data_sp));
-    if (! data_stack_mem) die("can't allocate data stack");
-    data_sp = data_stack_mem + STACK_SIZE-1;
-
-    call_stack_mem = allocate_noptr(STACK_SIZE * sizeof(* call_sp));
-    if (! call_stack_mem) die("can't allocate call stack");
-    call_sp = call_stack_mem + STACK_SIZE-1;
-
     using_history();
 
     char * line;
-    while (line = readline("deux> ")) {
+    while (line = readline("~> ")) {
         if (* line) add_history(line);
 
         struct maybe_item maybe_tree = parse(line);
@@ -1003,14 +820,10 @@ void repl() {
             print_cons_item(maybe_tree.v); putchar('\n');
         }
 
-        //struct action assemble_opcodes = compile(tree);
-        //struct action execute_program = direct_threaded(assemble_opcodes);
-        //direct_threaded(execute_program);
+        //TODO compile
+        //TODO execute
 
         free(line);
-        //collect();
-
-        //print_heap();
     }
     putchar('\n');
 }
@@ -1018,6 +831,4 @@ void repl() {
 int main(int argc, char * argv[]) {
     init_heap();
     repl();
-    //collect();
-    //print_heap();
 }
