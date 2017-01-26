@@ -10,7 +10,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "stack.h"
+#include "deux.h"
 
 // memory management
 

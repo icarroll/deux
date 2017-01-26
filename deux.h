@@ -1,5 +1,5 @@
-#ifndef STACK_H
-#define STACK_H
+#ifndef DEUX_H
+#define DEUX_H
 
 enum {
     HEAP_SIZE=16*1024*1024,     // 16 MB
@@ -78,4 +78,4 @@ void print_tail_cons(struct cons * cell);
 
 void die(char * message);
 
-#endif // STACK_H
+#endif // DEUX_H

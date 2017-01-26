@@ -7,9 +7,9 @@ SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
-all: stack
+all: deux
 
-stack: stack.o
+deux: deux.o
 
 -include $(DEP)
 
@@ -17,7 +17,7 @@ stack: stack.o
 .PHONY: debug debug_do clean
 
 clean:
-	rm -f $(OBJ) stack
+	rm -f $(OBJ) deux
 
 
 debug:
