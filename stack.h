@@ -15,7 +15,7 @@ struct heap {
     void * memory;
     void * end;
     void * next;
-    void ** root_block;
+    struct block_header * root_block;
 };
 
 enum layout {

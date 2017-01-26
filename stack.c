@@ -32,7 +32,7 @@ void print_mark_list(struct block_header * header) {
 }
 
 void mark_in(struct heap * heap) {
-    struct block_header * next_header = get_header(heap->root_block);
+    struct block_header * next_header = heap->root_block;
     struct block_header * last_header = next_header;
 
     next_header->link_ptr = NULL;
@@ -182,21 +182,20 @@ void compact_in(struct heap * heap) {
 }
 
 //TODO
-// display of heap blocks
 // check heap for errors
 // test allocation and collection
 
 void collect_in(struct heap * heap) {
-    printf("collecting...");
+    //printf("collecting..."); fflush(stdout);
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
-    void ** new_root = get_header(heap->root_block)->link_ptr;
+    struct block_header * new_root = heap->root_block->link_ptr;
     update_pointers_in(heap);
     compact_in(heap);
 
     heap->next = new_next;
     heap->root_block = new_root;
-    printf(" done\n");
+    //printf(" done\n");
 }
 
 int round_to(int unit, int amount) {
@@ -234,12 +233,12 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
 }
 
 void add_root_in(struct heap * heap, void * new_root_ptr) {
-    void ** root_block = heap->root_block;
+    struct block_header * root_block = heap->root_block;
 
-    void ** block_end = root_block + get_header(root_block)->size;
+    void ** block_end = root_block->data + root_block->size;
 
     void ** candidate;
-    for (candidate = root_block ; candidate < block_end ; candidate += 1) {
+    for (candidate=root_block->data ; candidate < block_end ; candidate += 1) {
         if (* candidate == NULL) {
             * candidate = new_root_ptr;
             return;
@@ -249,9 +248,9 @@ void add_root_in(struct heap * heap, void * new_root_ptr) {
     void ** new_block = allocate_in(heap, ROOT_BLOCK_SIZE, all_ptr_layout);
     if (! new_block) die("can't allocate root block");
 
-    new_block[0] = root_block;
+    new_block[0] = root_block->data;
     new_block[1] = new_root_ptr;
-    heap->root_block = new_block;
+    heap->root_block = get_header(new_block);
 }
 
 void make_heap(struct heap * heap, int size) {
@@ -265,8 +264,9 @@ void make_heap(struct heap * heap, int size) {
     heap->end = memory + rounded_size;
     heap->next = memory;
 
-    heap->root_block = allocate_in(heap, ROOT_BLOCK_SIZE * sizeof(void *), all_ptr_layout);
-    if (! heap->root_block) die("can't allocate root block");
+    void ** block = allocate_in(heap, ROOT_BLOCK_SIZE * sizeof(void *), all_ptr_layout);
+    if (! block) die("can't allocate root block");
+    heap->root_block = get_header(block);
 }
 
 struct heap heap;
@@ -331,6 +331,7 @@ char * cons_tag_str(enum cons_tag val) {
     }
 }
 
+//TODO iterate over headers instead of datas
 void print_heap_in(struct heap * heap) {
     printf("memory=%x end=%x next=%x root_block=%x\n",
            heap->memory, heap->end, heap->next, heap->root_block);
@@ -1007,6 +1008,7 @@ void repl() {
         //direct_threaded(execute_program);
 
         free(line);
+        //collect();
 
         //print_heap();
     }
@@ -1016,6 +1018,6 @@ void repl() {
 int main(int argc, char * argv[]) {
     init_heap();
     repl();
-    collect();
+    //collect();
     //print_heap();
 }
