@@ -14,7 +14,7 @@
 
 // memory management
 
-struct registers registers;
+struct registers regs;
 
 struct block_header * get_header(void * block_ptr) {
     return (struct block_header *) (block_ptr - hdr_sz);
@@ -39,14 +39,14 @@ void mark_in(struct heap * heap) {
     heap->root_block->marked = true;
     struct block_header * last_header = heap->root_block;
 
-    if (registers.code_block) {
-        last_header->link_ptr = registers.code_block;
+    if (regs.code_block) {
+        last_header->link_ptr = regs.code_block;
         last_header->marked = true;
         last_header = last_header->link_ptr;
     }
 
-    if (registers.data_block) {
-        last_header->link_ptr = registers.data_block;
+    if (regs.data_block) {
+        last_header->link_ptr = regs.data_block;
         last_header->marked = true;
         last_header = last_header->link_ptr;
     }
@@ -198,13 +198,13 @@ void collect_in(struct heap * heap) {
     struct block_header * new_root = heap->root_block->link_ptr;
 
     struct block_header * new_code_block;
-    if (registers.code_block) {
-        new_code_block = get_header(registers.code_block)->link_ptr;
+    if (regs.code_block) {
+        new_code_block = get_header(regs.code_block)->link_ptr;
     }
 
     struct block_header * new_data_block;
-    if (registers.data_block) {
-        new_data_block = get_header(registers.data_block)->link_ptr;
+    if (regs.data_block) {
+        new_data_block = get_header(regs.data_block)->link_ptr;
     }
 
     update_pointers_in(heap);
@@ -212,8 +212,8 @@ void collect_in(struct heap * heap) {
 
     heap->next = new_next;
     heap->root_block = new_root;
-    if (registers.code_block) registers.code_block = new_code_block->data;
-    if (registers.data_block) registers.data_block = new_data_block->data;
+    if (regs.code_block) regs.code_block = new_code_block->data;
+    if (regs.data_block) regs.data_block = new_data_block->data;
 }
 
 int round_to(int unit, int amount) {
@@ -406,55 +406,124 @@ enum opcodes {
     ALLOCATE_NOPTR,
     ALLOCATE_ALLPTR,
     ALLOCATE_CONS,
-    CONST,
+    DEREF,
+    CONST_imm16,
+    SET_14l,
+    SET_16h,
     ADD,
+    OR,
+    LSHIFT_imm8,
     /*
     MUL,
     AND,
-    OR,
     XOR,
     RSHIFT,
-    LSHIFT,
     */
     DEBUG_WRITEHEX,
 };
 
 void run() {
     while (true) {
-        int instruction = (int) registers.code_block[registers.instruction];
+        int instruction = (int) regs.code_block[regs.instruction++];
         int opcode = instruction >> 24;
         int argument = instruction & 0xffffff;
 
-        int index = (argument >> 8) & 0xff;
-        int value = argument & 0xff;
+        int arg8_1 = argument >> 16;
+        int arg_16 = argument & 0xffff;
+        int arg8_2 = (argument >> 8) & 0xff;
+        int arg8_3 = argument & 0xff;
 
         int temp;
 
         switch (opcode) {
         case STOP:
             return;
-        case CONST:
+        case ALLOCATE_NOPTR:
+            regs.data_block[arg8_1] = allocate_noptr(arg_16);
+            break;
+        case ALLOCATE_ALLPTR:
+            regs.data_block[arg8_1] = allocate_allptr(arg_16);
+            break;
+        case ALLOCATE_CONS:
+            regs.data_block[arg8_1] = allocate_cons();
+            break;
+        case DEREF:
+            regs.data_block[arg8_1]
+                = ((void **) regs.data_block[arg8_2])[arg8_3];
+            break;
+        case CONST_imm16:
+            regs.data_block[arg8_1] = (void *) ((arg_16 << 2) | 0b11);
+            break;
+        case SET_14l:
+            {
+                int low14 = (arg_16 & 0x3fff) << 2;
+                int high16 = (uint32_t) regs.data_block[arg8_1] & 0xffff0000;
+                regs.data_block[arg8_1] = (void *) (high16 | low14 | 0b11);
+            }
+            break;
+        case SET_16h:
+            {
+                int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
+                int high16 = arg_16 << 16;
+                regs.data_block[arg8_1] = (void *) (high16 | low16 | 0b11);
+            }
             break;
         case ADD:
+            {
+                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
+                int raw2 = (int) regs.data_block[arg8_3] & 0xfffffffc;
+                regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
+            }
+            break;
+        case OR:
+            {
+                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
+                int raw2 = (int) regs.data_block[arg8_3] & 0xfffffffc;
+                regs.data_block[arg8_1] = (void *) ((raw1 | raw2) | 0b11);
+            }
+            break;
+        case LSHIFT_imm8:
+            {
+                int raw = (int) regs.data_block[arg8_2] & 0xfffffffc;
+                regs.data_block[arg8_1] = (void *) ((raw << arg8_3) | 0b11);
+            }
             break;
         case DEBUG_WRITEHEX:
-            printf("%x\n", 0xdeadbeef);
+            printf("0x%08x%c", regs.data_block[arg8_1], arg8_3);
             break;
         }
     }
 }
 
-/*
-void run() {
-    enum opcodes source[] = {
-        LIT, 5,
-        LIT, 15,
-        LIT, 47,
-        STOP,
-    };
-    int source_length = sizeof(source) / sizeof(source[0]);
+uint32_t op8(enum opcodes opcode, uint8_t target, uint8_t source, uint8_t arg) {
+    return opcode << 24 | target << 16 | source << 8 | arg;
 }
-*/
+
+uint32_t op16(enum opcodes opcode, uint8_t target, uint16_t arg) {
+    return opcode << 24 | target << 16 | arg;
+}
+
+uint32_t op(enum opcodes opcode) {
+    return opcode << 24;
+}
+
+void prepare() {
+    enum opcodes source[] = {
+        op16(SET_16h, 0, 0xdead),
+        op16(SET_14l, 1, 0xbeef >> 2),
+        op8(ADD, 2, 1, 0),
+        op16(DEBUG_WRITEHEX, 0, ' '),
+        op16(DEBUG_WRITEHEX, 1, ' '),
+        op16(DEBUG_WRITEHEX, 2, ' '),
+        op16(DEBUG_WRITEHEX, 3, '\n'),
+        op(STOP),
+    };
+
+    regs.data_block = allocate_allptr(16);
+    regs.code_block = allocate_noptr(sizeof(source));
+    memmove(regs.code_block, source, sizeof(source));
+    regs.instruction = 0;
+}
 
 // end virtual machine
 
@@ -745,5 +814,7 @@ void repl() {
 
 int main(int argc, char * argv[]) {
     init_heap();
-    repl();
+    //repl();
+    prepare();
+    run();
 }

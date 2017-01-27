@@ -35,6 +35,8 @@ char * bool_str(bool val);
 
 char * layout_str(enum layout val);
 
+void * allocate_cons();
+
 struct registers {
     void ** code_block;
     int instruction;
