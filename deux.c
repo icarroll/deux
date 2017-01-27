@@ -60,19 +60,21 @@ void mark_in(struct heap * heap) {
         case no_ptr_layout:
             break;
         case all_ptr_layout:
-            0;
-            void ** end = cur_header->data
-                          + cur_header->size / sizeof(* cur_header->data);
-            for (void ** candidate = cur_header->data
-                 ; candidate < end
-                 ; candidate += 1) {
-                if (* candidate) {
-                    struct block_header * header = get_header(* candidate);
-                    if (! header->marked) {
-                        header->link_ptr = NULL;
-                        header->marked = true;
-                        last_header->link_ptr = header;
-                        last_header = header;
+            {
+                void ** end = cur_header->data
+                              + cur_header->size / sizeof(* cur_header->data);
+                for (void ** candidate = cur_header->data
+                     ; candidate < end
+                     ; candidate += 1) {
+                    // don't follow null or unaligned pointers
+                    if (* candidate && ! ((int) * candidate & 0b11)) {
+                        struct block_header * header = get_header(* candidate);
+                        if (! header->marked) {
+                            header->link_ptr = NULL;
+                            header->marked = true;
+                            last_header->link_ptr = header;
+                            last_header = header;
+                        }
                     }
                 }
             }
@@ -143,8 +145,8 @@ void update_pointers_in(struct heap * heap) {
             for (void ** candidate = (void **) block
                  ; candidate < (void **) (block + header->size)
                  ; candidate += 1) {
-                // forward any non-zero pointers
-                if (* candidate) {
+                // forward any non-zero aligned pointers
+                if (* candidate && ! ((int) * candidate & 0b11)) {
                     * candidate = get_header(* candidate)->link_ptr + hdr_sz;
                 }
             }
@@ -436,7 +438,7 @@ void run() {
         case ADD:
             break;
         case DEBUG_WRITEHEX:
-            printf("%x\n", WHUT);
+            printf("%x\n", 0xdeadbeef);
             break;
         }
     }
