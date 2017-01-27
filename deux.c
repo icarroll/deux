@@ -409,9 +409,10 @@ enum opcodes {
     DEREF,
     CONST_imm16,
     CONST_imm16_raw,
-    SET_14l,
+    SET_16l,
     SET_16l_raw,
-    SET_16h,
+    SET_14h,
+    SET_16h_raw,
     ADD,
     ADD_raw,
     OR,
@@ -430,24 +431,24 @@ enum opcodes {
 void run() {
     while (true) {
         int instruction = (int) regs.code_block[regs.instruction++];
-        int opcode = instruction >> 24;
+        int op = instruction >> 24;
         int argument = instruction & 0xffffff;
 
         int arg8_1 = argument >> 16;
-        int arg_16 = argument & 0xffff;
+        int arg16 = argument & 0xffff;
         int arg8_2 = (argument >> 8) & 0xff;
         int arg8_3 = argument & 0xff;
 
         int temp;
 
-        switch (opcode) {
+        switch (op) {
         case STOP:
             return;
         case ALLOCATE_NOPTR:
-            regs.data_block[arg8_1] = allocate_noptr(arg_16);
+            regs.data_block[arg8_1] = allocate_noptr(arg16);
             break;
         case ALLOCATE_ALLPTR:
-            regs.data_block[arg8_1] = allocate_allptr(arg_16);
+            regs.data_block[arg8_1] = allocate_allptr(arg16);
             break;
         case ALLOCATE_CONS:
             regs.data_block[arg8_1] = allocate_cons();
@@ -457,29 +458,36 @@ void run() {
                 = ((void **) regs.data_block[arg8_2])[arg8_3];
             break;
         case CONST_imm16:
-            regs.data_block[arg8_1] = (void *) ((arg_16 << 2) | 0b11);
+            regs.data_block[arg8_1] = (void *) ((arg16 << 2) | 0b11);
             break;
         case CONST_imm16_raw:
-            regs.data_block[arg8_1] = (void *) arg_16;
+            regs.data_block[arg8_1] = (void *) arg16;
             break;
-        case SET_14l:
+        case SET_16l:
             {
-                int low14 = (arg_16 & 0x3fff) << 2;
-                int high16 = (uint32_t) regs.data_block[arg8_1] & 0xffff0000;
-                regs.data_block[arg8_1] = (void *) (high16 | low14 | 0b11);
+                int low16 = arg16 << 2;
+                int high14 = (uint32_t) regs.data_block[arg8_1] & 0xfffc0000;
+                regs.data_block[arg8_1] = (void *) (high14 | low16 | 0b11);
             }
             break;
         case SET_16l_raw:
             {
-                int low16 = arg_16 & 0xffff;
+                int low16 = arg16 & 0xffff;
                 int high16 = (uint32_t) regs.data_block[arg8_1] & 0xffff0000;
                 regs.data_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
-        case SET_16h:
+        case SET_14h:
             {
                 int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
-                int high16 = arg_16 << 16;
+                int high14 = (arg16 & 0x3fff) << 18;
+                regs.data_block[arg8_1] = (void *) (high14 | low16);
+            }
+            break;
+        case SET_16h_raw:
+            {
+                int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
+                int high16 = arg16 << 16;
                 regs.data_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
@@ -530,28 +538,31 @@ void run() {
     }
 }
 
-uint32_t op8(enum opcodes opcode, uint8_t target, uint8_t source, uint8_t arg) {
-    return opcode << 24 | target << 16 | source << 8 | arg;
+uint32_t op111(enum opcodes op, uint8_t arg8_1, uint8_t arg8_2, uint8_t arg8_3)
+{
+    return op << 24 | arg8_1 << 16 | arg8_2 << 8 | arg8_3;
 }
 
-uint32_t op16(enum opcodes opcode, uint8_t target, uint16_t arg) {
-    return opcode << 24 | target << 16 | arg;
+uint32_t op12(enum opcodes op, uint8_t arg8_1, uint16_t arg16) {
+    return op << 24 | arg8_1 << 16 | arg16;
 }
 
-uint32_t op(enum opcodes opcode) {
-    return opcode << 24;
+uint32_t op(enum opcodes op) {
+    return op << 24;
 }
 
 void prepare() {
     enum opcodes source[] = {
-        //op
-        op16(SET_16h, 0, 0xdead),
-        op16(SET_14l, 1, 0xbeef >> 2),
-        op8(ADD, 2, 1, 0),
-        op16(DEBUG_WRITEHEX, 0, ' '),
-        op16(DEBUG_WRITEHEX, 1, ' '),
-        op16(DEBUG_WRITEHEX, 2, ' '),
-        op16(DEBUG_WRITEHEX, 3, '\n'),
+        op12(SET_14h, 0, 0xdead),
+        op12(SET_16l, 0, 0xbeef),
+        op12(SET_16h_raw, 1, 0xdead),
+        op12(SET_16l_raw, 1, 0xbeef),
+        op12(ALLOCATE_ALLPTR, 2, 100),
+        op12(ALLOCATE_NOPTR, 3, 100),
+        op12(DEBUG_WRITEHEX, 0, ' '),
+        op12(DEBUG_WRITEHEX, 1, ' '),
+        op12(DEBUG_WRITEHEX, 2, ' '),
+        op12(DEBUG_WRITEHEX, 3, '\n'),
         op(STOP),
     };
 
