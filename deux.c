@@ -401,7 +401,10 @@ void print_heap() {
 
 enum opcodes {
     STOP=0,
-    STORE,
+    ALLOCATE_NOPTR,
+    ALLOCATE_ALLPTR,
+    ALLOCATE_CONS,
+    CONST,
     ADD,
     /*
     MUL,
@@ -414,23 +417,12 @@ enum opcodes {
     DEBUG_WRITEHEX,
 };
 
-void store(void ** block, int steps, int index, int value) {
-    if (steps == 0) block[index] = (void *) value;
-    else store(* block, steps-1, index, value);
-}
-
-int get(void ** block, int steps, int index) {
-    if (steps == 0) return (int) block[index];
-    else return get(* block, steps-1, index);
-}
-
 void run() {
     while (true) {
         int instruction = (int) registers.code_block[registers.instruction];
         int opcode = instruction >> 24;
         int argument = instruction & 0xffffff;
 
-        int steps = argument >> 16;
         int index = (argument >> 8) & 0xff;
         int value = argument & 0xff;
 
@@ -439,95 +431,16 @@ void run() {
         switch (opcode) {
         case STOP:
             return;
-        case STORE:
-            store(registers.data_block, steps, index, value);
+        case CONST:
             break;
         case ADD:
-            temp = get(registers.data_block, steps, index) + value;
-            store(registers.data_block, steps, index, temp);
             break;
         case DEBUG_WRITEHEX:
-            printf("%x\n", get(registers.data_block, steps, index));
+            printf("%x\n", WHUT);
             break;
         }
     }
 }
-
-/*
-{
-zero:
-    data_sp[0] = 0;
-    data_sp -= 1;
-zero_end:
-    goto ** (ip++);
-
-one:
-    data_sp[0] = 1;
-    data_sp -= 1;
-one_end:
-    goto ** (ip++);
-
-negone:
-    data_sp[0] = -1;
-    data_sp -= 1;
-negone_end:
-    goto ** (ip++);
-
-lit:
-    data_sp[0] = (uint32_t) * ip++;
-    data_sp -= 1;
-lit_end:
-    goto ** (ip++);
-
-add:
-    data_sp[2] += data_sp[1];
-    data_sp += 1;
-add_end:
-    goto ** (ip++);
-
-mul:
-    data_sp[2] *= data_sp[1];
-    data_sp += 1;
-mul_end:
-    goto ** (ip++);
-
-and:
-    data_sp[2] &= data_sp[1];
-    data_sp += 1;
-and_end:
-    goto ** (ip++);
-
-or:
-    data_sp[2] |= data_sp[1];
-    data_sp += 1;
-or_end:
-    goto ** (ip++);
-
-xor:
-    data_sp[2] ^= data_sp[1];
-    data_sp += 1;
-xor_end:
-    goto ** (ip++);
-
-rshift:
-    data_sp[2] >>= data_sp[1];
-    data_sp += 1;
-rshift_end:
-    goto ** (ip++);
-
-lshift:
-    data_sp[2] <<= data_sp[1];
-    data_sp += 1;
-lshift_end:
-    goto ** (ip++);
-
-debug_writehex:
-    printf("%x\n", data_sp[1]);
-    data_sp += 1;
-debug_writehex_end:
-    goto ** (ip++);
-}
-*/
 
 /*
 void run() {
