@@ -408,11 +408,16 @@ enum opcodes {
     ALLOCATE_CONS,
     DEREF,
     CONST_imm16,
+    CONST_imm16_raw,
     SET_14l,
+    SET_16l_raw,
     SET_16h,
     ADD,
+    ADD_raw,
     OR,
+    OR_raw,
     LSHIFT_imm8,
+    LSHIFT_imm8_raw,
     /*
     MUL,
     AND,
@@ -454,6 +459,9 @@ void run() {
         case CONST_imm16:
             regs.data_block[arg8_1] = (void *) ((arg_16 << 2) | 0b11);
             break;
+        case CONST_imm16_raw:
+            regs.data_block[arg8_1] = (void *) arg_16;
+            break;
         case SET_14l:
             {
                 int low14 = (arg_16 & 0x3fff) << 2;
@@ -461,11 +469,18 @@ void run() {
                 regs.data_block[arg8_1] = (void *) (high16 | low14 | 0b11);
             }
             break;
+        case SET_16l_raw:
+            {
+                int low16 = arg_16 & 0xffff;
+                int high16 = (uint32_t) regs.data_block[arg8_1] & 0xffff0000;
+                regs.data_block[arg8_1] = (void *) (high16 | low16);
+            }
+            break;
         case SET_16h:
             {
                 int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
                 int high16 = arg_16 << 16;
-                regs.data_block[arg8_1] = (void *) (high16 | low16 | 0b11);
+                regs.data_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
         case ADD:
@@ -475,6 +490,13 @@ void run() {
                 regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
             }
             break;
+        case ADD_raw:
+            {
+                int raw1 = (int) regs.data_block[arg8_2];
+                int raw2 = (int) regs.data_block[arg8_3];
+                regs.data_block[arg8_1] = (void *) (raw1 + raw2);
+            }
+            break;
         case OR:
             {
                 int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
@@ -482,10 +504,23 @@ void run() {
                 regs.data_block[arg8_1] = (void *) ((raw1 | raw2) | 0b11);
             }
             break;
+        case OR_raw:
+            {
+                int raw1 = (int) regs.data_block[arg8_2];
+                int raw2 = (int) regs.data_block[arg8_3];
+                regs.data_block[arg8_1] = (void *) (raw1 | raw2);
+            }
+            break;
         case LSHIFT_imm8:
             {
                 int raw = (int) regs.data_block[arg8_2] & 0xfffffffc;
                 regs.data_block[arg8_1] = (void *) ((raw << arg8_3) | 0b11);
+            }
+            break;
+        case LSHIFT_imm8_raw:
+            {
+                int raw = (int) regs.data_block[arg8_2];
+                regs.data_block[arg8_1] = (void *) (raw << arg8_3);
             }
             break;
         case DEBUG_WRITEHEX:
@@ -509,6 +544,7 @@ uint32_t op(enum opcodes opcode) {
 
 void prepare() {
     enum opcodes source[] = {
+        //op
         op16(SET_16h, 0, 0xdead),
         op16(SET_14l, 1, 0xbeef >> 2),
         op8(ADD, 2, 1, 0),
