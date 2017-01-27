@@ -429,17 +429,15 @@ enum opcodes {
 };
 
 void run() {
-    while (true) {
+    unsigned int end = get_header(regs.code_block)->size / sizeof(void *);
+    while (regs.instruction < end) {
         int instruction = (int) regs.code_block[regs.instruction++];
         int op = instruction >> 24;
-        int argument = instruction & 0xffffff;
-
-        int arg8_1 = argument >> 16;
-        int arg16 = argument & 0xffff;
-        int arg8_2 = (argument >> 8) & 0xff;
-        int arg8_3 = argument & 0xff;
-
-        int temp;
+        int arg24 = instruction & 0xffffff;
+        int arg8_1 = arg24 >> 16;
+        int arg16 = arg24 & 0xffff;
+        int arg8_2 = (arg24 >> 8) & 0xff;
+        int arg8_3 = arg24 & 0xff;
 
         switch (op) {
         case STOP:
@@ -536,6 +534,8 @@ void run() {
             break;
         }
     }
+
+    die("ran off code block end");
 }
 
 uint32_t op111(enum opcodes op, uint8_t arg8_1, uint8_t arg8_2, uint8_t arg8_3)
@@ -602,7 +602,7 @@ void * get_symbol_ref_n(char * name, int length) {
         node = next_node;
     }
 
-    return (void *) node;
+    return (void *) node->name;
 }
 
 void * get_symbol_ref(char * name) {
@@ -653,8 +653,7 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "%u", (unsigned int) item.ptr);
             break;
         case sym_tag:
-            fprintf(stdout, "%s",
-                    ((struct symbol_intern_node *) item.ptr)->name);
+            fprintf(stdout, "%s", (char *) item.ptr);
             break;
         case cons_tag:
             fputc('(', stdout);
@@ -861,7 +860,7 @@ void repl() {
 
 int main(int argc, char * argv[]) {
     init_heap();
-    //repl();
     prepare();
     run();
+    repl();
 }
