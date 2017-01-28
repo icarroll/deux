@@ -39,7 +39,7 @@ void * allocate_cons();
 
 struct registers {
     void ** code_block;
-    unsigned int instruction;
+    unsigned int icount;
     void ** data_block;
 };
 

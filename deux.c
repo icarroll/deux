@@ -402,18 +402,27 @@ void print_heap() {
 // virtual machine
 
 enum opcodes {
-    STOP=0,
+    HALT=0,
     ALLOCATE_NOPTR,
     ALLOCATE_ALLPTR,
     ALLOCATE_CONS,
+    GET_CBLK,
+    GET_INST,
+    GET_DBLK,
+    COPY_FAR,
+    JUMP_FAR,
+    JUMP_FAR_imm8,
+    JUMP_AREC,
     DEREF,
     CONST_imm16,
+    CONST_FAR_imm8,
     CONST_imm16_raw,
     SET_16l,
     SET_16l_raw,
     SET_14h,
     SET_16h_raw,
     ADD,
+    ADD_imm8,
     ADD_raw,
     OR,
     OR_raw,
@@ -430,9 +439,10 @@ enum opcodes {
 
 void run() {
     unsigned int end = get_header(regs.code_block)->size / sizeof(void *);
-    while (regs.instruction < end) {
-        int instruction = (int) regs.code_block[regs.instruction++];
-        int op = instruction >> 24;
+    while (regs.icount < end) {
+        unsigned int instruction = (unsigned int) regs.code_block[regs.icount];
+        regs.icount += 1;
+        enum opcodes op = instruction >> 24;
         int arg24 = instruction & 0xffffff;
         int arg8_1 = arg24 >> 16;
         int arg16 = arg24 & 0xffff;
@@ -440,7 +450,7 @@ void run() {
         int arg8_3 = arg24 & 0xff;
 
         switch (op) {
-        case STOP:
+        case HALT:
             return;
         case ALLOCATE_NOPTR:
             regs.data_block[arg8_1] = allocate_noptr(arg16);
@@ -451,12 +461,53 @@ void run() {
         case ALLOCATE_CONS:
             regs.data_block[arg8_1] = allocate_cons();
             break;
+        case GET_CBLK:
+            regs.data_block[arg8_1] = regs.code_block;
+            break;
+        case GET_INST:
+            regs.data_block[arg8_1] = (void *) ((regs.icount << 2) | 0b11);
+            break;
+        case GET_DBLK:
+            regs.data_block[arg8_1] = regs.data_block;
+            break;
+        case COPY_FAR:
+            ((void **) regs.data_block[arg8_1])[arg8_2]
+                = regs.data_block[arg8_3];
+            break;
+        case JUMP_FAR:
+            regs.code_block = regs.data_block[arg8_1];
+            regs.icount = (unsigned int) regs.data_block[arg8_2] >> 2;
+            regs.data_block = regs.data_block[arg8_3];
+            end = get_header(regs.code_block)->size / sizeof(void *);
+            break;
+        case JUMP_FAR_imm8:
+            regs.code_block = regs.data_block[arg8_1];
+            regs.icount = (unsigned int) arg8_2;
+            regs.data_block = regs.data_block[arg8_3];
+            end = get_header(regs.code_block)->size / sizeof(void *);
+            break;
+        case JUMP_AREC:
+            regs.data_block[0] = regs.code_block;
+            regs.data_block[1] = (void *) ((regs.icount << 2) | 0b11);
+
+            regs.data_block = regs.data_block[arg8_1];
+            regs.code_block = regs.data_block[0];
+            regs.icount = (unsigned int) regs.data_block[1] >> 2;
+
+            end = get_header(regs.code_block)->size / sizeof(void *);
+            break;
         case DEREF:
             regs.data_block[arg8_1]
                 = ((void **) regs.data_block[arg8_2])[arg8_3];
             break;
         case CONST_imm16:
             regs.data_block[arg8_1] = (void *) ((arg16 << 2) | 0b11);
+            break;
+        case CONST_FAR_imm8:
+            {
+                int value = (arg8_3 << 2) | 0b11;
+                ((void **) regs.data_block[arg8_1])[arg8_2] = (void *) value;
+            }
             break;
         case CONST_imm16_raw:
             regs.data_block[arg8_1] = (void *) arg16;
@@ -493,6 +544,13 @@ void run() {
             {
                 int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
                 int raw2 = (int) regs.data_block[arg8_3] & 0xfffffffc;
+                regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
+            }
+            break;
+        case ADD_imm8:
+            {
+                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
+                int raw2 = arg8_3 << 2;
                 regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
             }
             break;
@@ -547,29 +605,60 @@ uint32_t op12(enum opcodes op, uint8_t arg8_1, uint16_t arg16) {
     return op << 24 | arg8_1 << 16 | arg16;
 }
 
+uint32_t op1(enum opcodes op, uint8_t arg8_1) {
+    return op << 24 | arg8_1 << 16;
+}
+
 uint32_t op(enum opcodes op) {
     return op << 24;
 }
 
 void prepare() {
+    int cblk = 0;
+    int icount = 1;
+    int link_value = 2;
+    int dyn_parent = 4;
+    int sub_arec = 6;
+    int sub_cblk = 7;
+    int temp = 8;
     enum opcodes source[] = {
-        op12(SET_14h, 0, 0xdead),
-        op12(SET_16l, 0, 0xbeef),
-        op12(SET_16h_raw, 1, 0xdead),
-        op12(SET_16l_raw, 1, 0xbeef),
-        op12(ALLOCATE_ALLPTR, 2, 100),
-        op12(ALLOCATE_NOPTR, 3, 100),
-        op12(DEBUG_WRITEHEX, 0, ' '),
-        op12(DEBUG_WRITEHEX, 1, ' '),
-        op12(DEBUG_WRITEHEX, 2, ' '),
-        op12(DEBUG_WRITEHEX, 3, '\n'),
-        op(STOP),
+        op12(ALLOCATE_ALLPTR, sub_arec, 16),   // subprogram activation record
+        op12(ALLOCATE_NOPTR, sub_cblk, 100),   // subprogram code block
+
+        // set up subprogram's activation record
+        // set code block and instruction counter
+        op111(COPY_FAR, sub_arec, cblk, sub_cblk),
+        op111(CONST_FAR_imm8, sub_arec, icount, 0),
+        // our data block (activation record) is subprogram's dynamic parent
+        op1(GET_DBLK, temp),
+        op111(COPY_FAR, sub_arec, dyn_parent, temp),
+
+        // add 0x55 to argument
+        op12(SET_16h_raw, temp, (ADD_imm8 << 8) + link_value),
+        op12(SET_16l_raw, temp, (link_value << 8) + 0x55),
+        op111(COPY_FAR, sub_cblk, 0, temp),
+
+        // store result into dynamic parent
+        op12(SET_16h_raw, temp, (COPY_FAR << 8) + dyn_parent),
+        op12(SET_16l_raw, temp, (link_value << 8) + link_value),
+        op111(COPY_FAR, sub_cblk, 1, temp),
+
+        // return to dynamic parent
+        op12(SET_16h_raw, temp, (JUMP_AREC << 8) + dyn_parent),
+        op12(SET_16l_raw, temp, 0),
+        op111(COPY_FAR, sub_cblk, 2, temp),
+
+        op111(CONST_FAR_imm8, sub_arec, link_value, 0xaa), // pass 0xaa as argument
+        op1(JUMP_AREC, sub_arec),  // jump to subprogram
+
+        op12(DEBUG_WRITEHEX, link_value, '\n'),
+        op(HALT),
     };
 
-    regs.data_block = allocate_allptr(16);
+    regs.data_block = allocate_allptr(10 * sizeof(void *));
     regs.code_block = allocate_noptr(sizeof(source));
     memmove(regs.code_block, source, sizeof(source));
-    regs.instruction = 0;
+    regs.icount = 0;
 }
 
 // end virtual machine
@@ -862,5 +951,5 @@ int main(int argc, char * argv[]) {
     init_heap();
     prepare();
     run();
-    repl();
+    //repl();
 }
