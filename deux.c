@@ -1024,7 +1024,7 @@ void print_disassembly(void ** code, int size) {
         unsigned int arg8_2 = (arg24 >> 8) & 0xff;
         unsigned int arg8_3 = arg24 & 0xff;
 
-        printf("%s ", opcode_to_mnemonic(op));
+        printf("0x%08x - %s ", instruction, opcode_to_mnemonic(op));
         switch (arg_pattern(op)) {
         case 0:
             break;
