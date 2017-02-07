@@ -9,11 +9,11 @@ DEP = $(SRC:.c=.d)
 
 all: deux
 
-deux: deux.o
+deux: deux.o mnemonics.o
 
 -include $(DEP)
 
-mnemonics.h: mnemonics.py
+mnemonics.h mnemonics.c: mnemonics.py
 	python mnemonics.py
 
 .PHONY: debug debug_do clean
