@@ -1009,8 +1009,43 @@ if (maybe_tree.present) {
 */
 
 void print_regs() {
-    printf("code=0x%08x instruction=%u data=0x%08x\n",
-           regs.code_block, regs.icount, regs.data_block);
+    printf("data=0x%08x code=0x%08x instruction=%u\n",
+           regs.data_block, regs.code_block, regs.icount);
+}
+
+void print_disassembly(void ** code, int size) {
+    for (int ix=0 ; ix < size/sizeof(void *) ; ix+=1) {
+        uint32_t instruction = (uint32_t) code[ix];
+
+        enum opcodes op = instruction >> 24;
+        unsigned int arg24 = instruction & 0xffffff;
+        unsigned int arg8_1 = arg24 >> 16;
+        unsigned int arg16 = arg24 & 0xffff;
+        unsigned int arg8_2 = (arg24 >> 8) & 0xff;
+        unsigned int arg8_3 = arg24 & 0xff;
+
+        printf("%s ", opcode_to_mnemonic(op));
+        switch (arg_pattern(op)) {
+        case 0:
+            break;
+        case 1:
+            printf("0x%02x", arg8_1);
+            break;
+        case 11:
+            printf("0x%02x 0x%02x", arg8_1, arg8_2);
+            break;
+        case 12:
+            printf("0x%02x 0x%04x", arg8_1, arg16);
+            break;
+        case 111:
+            printf("0x%02x 0x%02x 0x%02x", arg8_1, arg8_2, arg8_3);
+            break;
+        default:
+            die("bad arg pattern");
+        }
+
+        putchar('\n');
+    }
 }
 
 void monitor() {
@@ -1035,21 +1070,21 @@ void monitor() {
         case 'r':
             print_regs();
             break;
-        case 'c':
+        case 'C':
             if (has_argument) {
                 regs.code_block = (void *) argument;
                 print_regs();
             }
             else printf("need value\n");
             break;
-        case 'i':
+        case 'I':
             if (has_argument) {
                 regs.icount = (unsigned int) argument;
                 print_regs();
             }
             else printf("need value\n");
             break;
-        case 'd':
+        case 'D':
             if (has_argument) {
                 regs.data_block = (void *) argument;
                 print_regs();
@@ -1058,6 +1093,13 @@ void monitor() {
             break;
         case 'g':
             //TODO start vm
+            break;
+        case 'd':
+            if (has_argument) {
+                void ** code_block = (void **) argument;
+                print_disassembly(code_block, get_header(code_block)->size);
+            }
+            else printf("need value\n");
             break;
         case 'b':
             //TODO display block
@@ -1082,9 +1124,9 @@ int main(int argc, char * argv[]) {
 
     init_heap();
 
-    /*
     create_test_sub();
 
+    /*
     struct do_next do_next;
 do_run:
     do_next = run();
