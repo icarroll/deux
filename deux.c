@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <inttypes.h>
 #include <readline/history.h>
 #include <readline/readline.h>
 #include <setjmp.h>
@@ -11,6 +13,7 @@
 #include <unistd.h>
 
 #include "deux.h"
+#include "mnemonics.h"
 
 // memory management
 
@@ -401,61 +404,76 @@ void print_heap() {
 
 // virtual machine
 
-enum opcodes {
-    HALT=0,
-    ALLOCATE_NOPTR,
-    ALLOCATE_ALLPTR,
-    ALLOCATE_CONS,
-    GET_CBLK,
-    GET_INST,
-    GET_DBLK,
-    COPY_FAR,
-    JUMP_FAR,
-    JUMP_FAR_imm8,
-    JUMP_AREC,
-    DEREF,
-    CONST_imm16,
-    CONST_FAR_imm8,
-    CONST_imm16_raw,
-    SET_16l,
-    SET_16l_raw,
-    SET_14h,
-    SET_16h_raw,
-    ADD,
-    ADD_imm8,
-    ADD_raw,
-    OR,
-    OR_raw,
-    LSHIFT_imm8,
-    LSHIFT_imm8_raw,
-    /*
-    MUL,
-    AND,
-    XOR,
-    RSHIFT,
-    */
-    DEBUG_WRITEHEX,
+jmp_buf abort_run;
+
+void throw_run_error(char * message) {
+    printf("%s\n", message);
+    longjmp(abort_run, 1);
+}
+
+void * tagint(uint32_t val) {
+    return (void *) ((val << 2) | 0b11);
+}
+
+uint32_t untag(void * val) {
+    return (uint32_t) val >> 2;
+}
+
+struct do_next {
+    enum {
+        abort_code,
+        halt_code,
+        jump_c,
+    } action;
+    struct registers regs;
 };
 
-void run() {
+struct do_next do_abort = {abort_code};
+struct do_next do_halt = {halt_code};
+
+void unimpl() {
+    die("unimplemented instruction");
+}
+
+struct do_next run() {
+    if (setjmp(abort_run)) {
+        printf("run error\n");
+        return do_abort;
+    }
+
     unsigned int end = get_header(regs.code_block)->size / sizeof(void *);
     while (regs.icount < end) {
         unsigned int instruction = (unsigned int) regs.code_block[regs.icount];
         regs.icount += 1;
+
         enum opcodes op = instruction >> 24;
-        int arg24 = instruction & 0xffffff;
-        int arg8_1 = arg24 >> 16;
-        int arg16 = arg24 & 0xffff;
-        int arg8_2 = (arg24 >> 8) & 0xff;
-        int arg8_3 = arg24 & 0xff;
+        unsigned int arg24 = instruction & 0xffffff;
+        unsigned int arg8_1 = arg24 >> 16;
+        unsigned int arg16 = arg24 & 0xffff;
+        unsigned int arg8_2 = (arg24 >> 8) & 0xff;
+        unsigned int arg8_3 = arg24 & 0xff;
 
         switch (op) {
+        case ABORT:
+            throw_run_error("hit ABORT code");
         case HALT:
-            return;
+            return do_halt;
         case ALLOCATE_NOPTR:
+            {
+                int size = untag(regs.data_block[arg8_2]);
+                regs.data_block[arg8_1] = allocate_noptr(size);
+            }
+            break;
+        case ALLOCATE_NOPTR_imm16:
             regs.data_block[arg8_1] = allocate_noptr(arg16);
             break;
         case ALLOCATE_ALLPTR:
+            {
+                int size = untag(regs.data_block[arg8_2]);
+                regs.data_block[arg8_1] = allocate_allptr(size);
+            }
+            break;
+        case ALLOCATE_ALLPTR_imm16:
             regs.data_block[arg8_1] = allocate_allptr(arg16);
             break;
         case ALLOCATE_CONS:
@@ -465,49 +483,47 @@ void run() {
             regs.data_block[arg8_1] = regs.code_block;
             break;
         case GET_INST:
-            regs.data_block[arg8_1] = (void *) ((regs.icount << 2) | 0b11);
+            regs.data_block[arg8_1] = tagint(regs.icount);
             break;
         case GET_DBLK:
             regs.data_block[arg8_1] = regs.data_block;
             break;
-        case COPY_FAR:
+        case READ_FAR:
+            regs.data_block[arg8_1]
+                = ((void **) regs.data_block[arg8_2])[arg8_3];
+            break;
+        case WRITE_FAR:
             ((void **) regs.data_block[arg8_1])[arg8_2]
                 = regs.data_block[arg8_3];
             break;
+        //TODO for out-of-heap jumps, transfer out of vm
         case JUMP_FAR:
             regs.code_block = regs.data_block[arg8_1];
-            regs.icount = (unsigned int) regs.data_block[arg8_2] >> 2;
+            regs.icount = untag(regs.data_block[arg8_2]);
             regs.data_block = regs.data_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_FAR_imm8:
             regs.code_block = regs.data_block[arg8_1];
-            regs.icount = (unsigned int) arg8_2;
+            regs.icount = arg8_2;
             regs.data_block = regs.data_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_AREC:
             regs.data_block[0] = regs.code_block;
-            regs.data_block[1] = (void *) ((regs.icount << 2) | 0b11);
+            regs.data_block[1] = tagint(regs.icount);
 
             regs.data_block = regs.data_block[arg8_1];
             regs.code_block = regs.data_block[0];
-            regs.icount = (unsigned int) regs.data_block[1] >> 2;
+            regs.icount = untag(regs.data_block[1]);
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
-        case DEREF:
-            regs.data_block[arg8_1]
-                = ((void **) regs.data_block[arg8_2])[arg8_3];
-            break;
         case CONST_imm16:
-            regs.data_block[arg8_1] = (void *) ((arg16 << 2) | 0b11);
+            regs.data_block[arg8_1] = tagint(arg16);
             break;
         case CONST_FAR_imm8:
-            {
-                int value = (arg8_3 << 2) | 0b11;
-                ((void **) regs.data_block[arg8_1])[arg8_2] = (void *) value;
-            }
+            ((void **) regs.data_block[arg8_1])[arg8_2] = tagint(arg8_3);
             break;
         case CONST_imm16_raw:
             regs.data_block[arg8_1] = (void *) arg16;
@@ -542,43 +558,63 @@ void run() {
             break;
         case ADD:
             {
-                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
-                int raw2 = (int) regs.data_block[arg8_3] & 0xfffffffc;
-                regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                uint32_t raw3 = untag(regs.data_block[arg8_3]);
+                regs.data_block[arg8_1] = tagint(raw2 + raw3);
             }
             break;
         case ADD_imm8:
             {
-                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
-                int raw2 = arg8_3 << 2;
-                regs.data_block[arg8_1] = (void *) ((raw1 + raw2) | 0b11);
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                regs.data_block[arg8_1] = tagint(raw2 + arg8_3);
             }
             break;
         case ADD_raw:
             {
-                int raw1 = (int) regs.data_block[arg8_2];
-                int raw2 = (int) regs.data_block[arg8_3];
-                regs.data_block[arg8_1] = (void *) (raw1 + raw2);
+                int raw2 = (int) regs.data_block[arg8_2];
+                int raw3 = (int) regs.data_block[arg8_3];
+                regs.data_block[arg8_1] = (void *) (raw2 + raw3);
+            }
+            break;
+        case MUL:
+            {
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                uint32_t raw3 = untag(regs.data_block[arg8_3]);
+                regs.data_block[arg8_1] = tagint(raw2 * raw3);
+            }
+            break;
+        case AND:
+            {
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                uint32_t raw3 = untag(regs.data_block[arg8_3]);
+                regs.data_block[arg8_1] = tagint(raw2 & raw3);
             }
             break;
         case OR:
             {
-                int raw1 = (int) regs.data_block[arg8_2] & 0xfffffffc;
-                int raw2 = (int) regs.data_block[arg8_3] & 0xfffffffc;
-                regs.data_block[arg8_1] = (void *) ((raw1 | raw2) | 0b11);
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                uint32_t raw3 = untag(regs.data_block[arg8_3]);
+                regs.data_block[arg8_1] = tagint(raw2 | raw3);
             }
             break;
         case OR_raw:
             {
-                int raw1 = (int) regs.data_block[arg8_2];
-                int raw2 = (int) regs.data_block[arg8_3];
-                regs.data_block[arg8_1] = (void *) (raw1 | raw2);
+                int raw2 = (int) regs.data_block[arg8_2];
+                int raw3 = (int) regs.data_block[arg8_3];
+                regs.data_block[arg8_1] = (void *) (raw2 | raw3);
+            }
+            break;
+        case XOR:
+            {
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                uint32_t raw3 = untag(regs.data_block[arg8_3]);
+                regs.data_block[arg8_1] = tagint(raw2 ^ raw3);
             }
             break;
         case LSHIFT_imm8:
             {
-                int raw = (int) regs.data_block[arg8_2] & 0xfffffffc;
-                regs.data_block[arg8_1] = (void *) ((raw << arg8_3) | 0b11);
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                regs.data_block[arg8_1] = tagint(raw2 << arg8_3);
             }
             break;
         case LSHIFT_imm8_raw:
@@ -587,13 +623,22 @@ void run() {
                 regs.data_block[arg8_1] = (void *) (raw << arg8_3);
             }
             break;
-        case DEBUG_WRITEHEX:
+        case RSHIFT_imm8:
+            {
+                uint32_t raw2 = untag(regs.data_block[arg8_2]);
+                regs.data_block[arg8_1] = tagint(raw2 >> arg8_3);
+            }
+            break;
+        case DEBUG_WRITEHEX_raw:
             printf("0x%08x%c", regs.data_block[arg8_1], arg8_3);
+            break;
+        case DEBUG_WRITEHEX_int:
+            printf("0x%08x%c", untag(regs.data_block[arg8_1]), arg8_3);
             break;
         }
     }
 
-    die("ran off code block end");
+    throw_run_error("ran off code block end");
 }
 
 uint32_t op111(enum opcodes op, uint8_t arg8_1, uint8_t arg8_2, uint8_t arg8_3)
@@ -613,45 +658,51 @@ uint32_t op(enum opcodes op) {
     return op << 24;
 }
 
-void prepare() {
-    int cblk = 0;
-    int icount = 1;
-    int link_value = 2;
-    int dyn_parent = 4;
-    int sub_arec = 6;
-    int sub_cblk = 7;
-    int temp = 8;
+void create_test_sub() {
+    enum {
+        cblk=0,
+        icount=1,
+        link_value=2,
+        dyn_parent=3,
+        stat_parent=4,
+        sub_descr=5,
+        sub_arec=6,
+        sub_cblk=7,
+        temp=8,
+    };
     enum opcodes source[] = {
-        op12(ALLOCATE_ALLPTR, sub_arec, 16),   // subprogram activation record
-        op12(ALLOCATE_NOPTR, sub_cblk, 100),   // subprogram code block
+        // subprogram activation record
+        op12(ALLOCATE_ALLPTR_imm16, sub_arec, 6*sizeof(void *)),
+        // subprogram code block
+        op12(ALLOCATE_NOPTR_imm16, sub_cblk, 3*sizeof(void *)),
 
         // set up subprogram's activation record
-        // set code block and instruction counter
-        op111(COPY_FAR, sub_arec, cblk, sub_cblk),
+        // code block and instruction counter
+        op111(WRITE_FAR, sub_arec, cblk, sub_cblk),
         op111(CONST_FAR_imm8, sub_arec, icount, 0),
         // our data block (activation record) is subprogram's dynamic parent
         op1(GET_DBLK, temp),
-        op111(COPY_FAR, sub_arec, dyn_parent, temp),
+        op111(WRITE_FAR, sub_arec, dyn_parent, temp),
 
         // add 0x55 to argument
         op12(SET_16h_raw, temp, (ADD_imm8 << 8) + link_value),
         op12(SET_16l_raw, temp, (link_value << 8) + 0x55),
-        op111(COPY_FAR, sub_cblk, 0, temp),
+        op111(WRITE_FAR, sub_cblk, 0, temp),
 
         // store result into dynamic parent
-        op12(SET_16h_raw, temp, (COPY_FAR << 8) + dyn_parent),
+        op12(SET_16h_raw, temp, (WRITE_FAR << 8) + dyn_parent),
         op12(SET_16l_raw, temp, (link_value << 8) + link_value),
-        op111(COPY_FAR, sub_cblk, 1, temp),
+        op111(WRITE_FAR, sub_cblk, 1, temp),
 
         // return to dynamic parent
         op12(SET_16h_raw, temp, (JUMP_AREC << 8) + dyn_parent),
         op12(SET_16l_raw, temp, 0),
-        op111(COPY_FAR, sub_cblk, 2, temp),
+        op111(WRITE_FAR, sub_cblk, 2, temp),
 
-        op111(CONST_FAR_imm8, sub_arec, link_value, 0xaa), // pass 0xaa as argument
+        op111(CONST_FAR_imm8, sub_arec, link_value, 0xaa), // argument is 0xaa
         op1(JUMP_AREC, sub_arec),  // jump to subprogram
 
-        op12(DEBUG_WRITEHEX, link_value, '\n'),
+        op12(DEBUG_WRITEHEX_int, link_value, '\n'),
         op(HALT),
     };
 
@@ -659,6 +710,16 @@ void prepare() {
     regs.code_block = allocate_noptr(sizeof(source));
     memmove(regs.code_block, source, sizeof(source));
     regs.icount = 0;
+}
+
+// call a virtual machine subprogram from c
+void * call_virtual(int which, void * arg) {
+    //TODO
+}
+
+// call c subprogram from virtual machine
+struct registers handle_jump_c(struct registers WHUT) {
+    //TODO
 }
 
 // end virtual machine
@@ -927,29 +988,120 @@ void compile(struct cons * tree) {
 //TODO
 }
 
-void repl() {
-    using_history();
+/*
+//TODO figure out return values
+void * read_sexp() {
+    char * line = readline("~> ");
+    if (! line) return NULL;
+    if (* line) add_history(line);
+    struct maybe_item maybe_tree = parse(line);
+    if (maybe_tree.present) return maybe_tree.v;
+    else return nil;
+}
+*/
 
+/*
+   HOW TO REPL
+struct maybe_item maybe_tree = parse(line);
+if (maybe_tree.present) {
+    print_cons_item(maybe_tree.v); putchar('\n');
+}
+*/
+
+void print_regs() {
+    printf("code=0x%08x instruction=%u data=0x%08x\n",
+           regs.code_block, regs.icount, regs.data_block);
+}
+
+void monitor() {
     char * line;
-    while (line = readline("~> ")) {
+    while (line = readline("mon> ")) {
+        if (! line) break;
         if (* line) add_history(line);
 
-        struct maybe_item maybe_tree = parse(line);
-        if (maybe_tree.present) {
-            print_cons_item(maybe_tree.v); putchar('\n');
-        }
+        char * text_ptr = line;
 
-        //TODO compile
-        //TODO execute
+        skip_space(& text_ptr);
+        char command = * text_ptr;
+        text_ptr += 1;
+
+        if (command == 'q') break;
+
+        char * end_ptr = text_ptr;
+        unsigned int argument = strtoumax(text_ptr, & end_ptr, 0);
+        bool has_argument = (end_ptr != text_ptr);
+
+        switch (command) {
+        case 'r':
+            print_regs();
+            break;
+        case 'c':
+            if (has_argument) {
+                regs.code_block = (void *) argument;
+                print_regs();
+            }
+            else printf("need value\n");
+            break;
+        case 'i':
+            if (has_argument) {
+                regs.icount = (unsigned int) argument;
+                print_regs();
+            }
+            else printf("need value\n");
+            break;
+        case 'd':
+            if (has_argument) {
+                regs.data_block = (void *) argument;
+                print_regs();
+            }
+            else printf("need value\n");
+            break;
+        case 'g':
+            //TODO start vm
+            break;
+        case 'b':
+            //TODO display block
+            break;
+        case 'h':
+            //TODO display header
+            break;
+        default:
+            printf("unknown command '%c'\n", command);
+            break;
+        }
 
         free(line);
     }
+
+quit:
     putchar('\n');
 }
 
 int main(int argc, char * argv[]) {
+    using_history();
+
     init_heap();
-    prepare();
-    run();
-    //repl();
+
+    /*
+    create_test_sub();
+
+    struct do_next do_next;
+do_run:
+    do_next = run();
+
+    switch (do_next.action) {
+    case abort_code:
+        die("ABORT");
+    case halt_code:
+        puts("halted");
+        break;
+    case jump_c:
+        regs = handle_jump_c(do_next.regs);
+        goto do_run;
+    default:
+        die("unknown do_next.action");
+    }
+    */
+
+    monitor();
 }

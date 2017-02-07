@@ -13,6 +13,8 @@ deux: deux.o
 
 -include $(DEP)
 
+mnemonics.h: mnemonics.py
+	python mnemonics.py
 
 .PHONY: debug debug_do clean
 
@@ -25,8 +27,3 @@ debug:
 
 debug_do: CFLAGS += -g -O0
 debug_do: all
-
-
-DEPS := $(COBJS:.o=.d)
-
--include $(DEPS)
