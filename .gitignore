@@ -3,3 +3,4 @@ deux
 *.o
 *.d
 notes
+mnemonics.[ch]
