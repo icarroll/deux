@@ -778,11 +778,16 @@ struct item sym(char * name) {
 struct item sym_n(char * name, int length) {
     return (struct item) {sym_tag, (void *) get_symbol_ref_n(name, length)};
 }
-struct item cons(struct item head, struct item tail) {
+
+struct cons * conscell(struct item head, struct item tail) {
     struct cons * cell = allocate_cons();
     cell->head = head;
     cell->tail = tail;
-    return (struct item) {cons_tag, cell};
+    return cell;
+}
+
+struct item cons(struct item head, struct item tail) {
+    return (struct item) {cons_tag, conscell(head, tail)};
 }
 
 void print_cons_item(struct item item) {
@@ -987,54 +992,50 @@ void die(char * message) {
 
 struct maybe_item assoc_find(void * needle, struct cons * haystack) {
     while (haystack) {
-        if (haystack->head.ptr == needle) return just(haystack->tail);
+        //TODO check that head is a cons
+        struct cons * candidate = (struct cons *) haystack->head.ptr;
+        if (candidate->head.ptr == needle) return just(candidate->tail);
         //TODO check that tail is a cons
         else haystack = (struct cons *) haystack->tail.ptr;
     }
     return nothing;
 }
 
-struct item lisp_eval(struct item exp, struct cons * env) {
-    switch (exp.tag) {
-    case char_tag:
-    case int_tag:
-        return exp;
-    case sym_tag:
-        {
-            struct maybe_item result = assoc_find(exp.ptr, env);
-            if (result.present) return result.v;
-            else die("unbound symbol");
+struct item lisp_eval(struct item orig_exp, struct item orig_env) {
+    struct cons * result_stack = conscell(nil, nil);
+    struct cons * todo_queue = conscell(orig_exp, nil);
+    struct cons * env_stack = conscell(orig_env, nil);
+
+    while (todo_queue) {
+        struct item exp = todo_queue->head;
+        todo_queue = todo_queue->tail.ptr; //TODO check for cons_tag
+        struct cons * env = env_stack->head.ptr;  //TODO check for cons_tag
+
+        switch (exp.tag) {
+        case char_tag:
+        case int_tag:
+            result_stack->head = exp;
+            break;
+        case sym_tag:
+            {
+                struct maybe_item value = assoc_find(exp.ptr, env);
+                if (value.present) result_stack->head = value.v;
+                else die("unbound symbol");
+            }
+            break;
+        case cons_tag:
+            //TODO special forms and function call
+            break;
+        case obj_tag:
+            //TODO figure out what objs are needed
+            break;
+        default:
+            die("unknown tag");
         }
-    case cons_tag:
-        //TODO special forms and function call
-        break;
-    case obj_tag:
-        //TODO figure out what objs are needed
-        break;
-    default:
-        die("unknown tag");
     }
-}
 
-/*
-//TODO figure out return values
-void * read_sexp() {
-    char * line = readline("~> ");
-    if (! line) return NULL;
-    if (* line) add_history(line);
-    struct maybe_item maybe_tree = parse(line);
-    if (maybe_tree.present) return maybe_tree.v;
-    else return nil;
+    return result_stack->head; //TODO check for length 1
 }
-*/
-
-/*
-   HOW TO REPL
-struct maybe_item maybe_tree = parse(line);
-if (maybe_tree.present) {
-    print_cons_item(maybe_tree.v); putchar('\n');
-}
-*/
 
 void print_regs() {
     printf("data=0x%08x code=0x%08x instruction=%u\n",
@@ -1152,7 +1153,26 @@ int main(int argc, char * argv[]) {
 
     init_heap();
 
+    struct item dummy_env = cons(cons(sym("x"), num(47)), cons(cons(sym("fred"), ch('q')), nil));
+
+    char * line;
+    while(line = readline("al> ")) {
+        if (* line) add_history(line);
+        struct maybe_item maybe_sexp = parse(line);
+        free(line);
+        if (maybe_sexp.present) {
+            struct item result = lisp_eval(maybe_sexp.v, dummy_env);
+            print_cons_item(result);
+            putchar('\n');
+        }
+    }
+    putchar('\n');
+
+    /*
     create_test_sub();
+
+    monitor();
+    */
 
     /*
     struct do_next do_next;
@@ -1172,6 +1192,4 @@ do_run:
         die("unknown do_next.action");
     }
     */
-
-    monitor();
 }
