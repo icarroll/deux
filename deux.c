@@ -1001,6 +1001,13 @@ struct maybe_item assoc_find(void * needle, struct cons * haystack) {
     return nothing;
 }
 
+jmp_buf abort_eval;
+
+void throw_eval_error(char * message) {
+    printf("%s\n", message);
+    longjmp(abort_eval, 1);
+}
+
 struct item lisp_eval(struct item orig_exp, struct item orig_env) {
     struct cons * result_stack = conscell(nil, nil);
     struct cons * todo_queue = conscell(orig_exp, nil);
@@ -1020,7 +1027,7 @@ struct item lisp_eval(struct item orig_exp, struct item orig_env) {
             {
                 struct maybe_item value = assoc_find(exp.ptr, env);
                 if (value.present) result_stack->head = value.v;
-                else die("unbound symbol");
+                else throw_eval_error("unbound symbol");
             }
             break;
         case cons_tag:
@@ -1161,9 +1168,14 @@ int main(int argc, char * argv[]) {
         struct maybe_item maybe_sexp = parse(line);
         free(line);
         if (maybe_sexp.present) {
-            struct item result = lisp_eval(maybe_sexp.v, dummy_env);
-            print_cons_item(result);
-            putchar('\n');
+            if (setjmp(abort_eval)) {
+                printf("eval error\n");
+            }
+            else {
+                struct item result = lisp_eval(maybe_sexp.v, dummy_env);
+                print_cons_item(result);
+                putchar('\n');
+            }
         }
     }
     putchar('\n');
