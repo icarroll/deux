@@ -806,6 +806,8 @@ void print_cons_item(struct item item) {
         case obj_tag:
             fprintf(stdout, "<obj>");
             break;
+        default:
+            die("unknown tag");
     }
 }
 
@@ -826,6 +828,8 @@ void print_tail_cons(struct cons * cell) {
                 print_tail_cons(cell->tail.ptr);
             }
             break;
+        default:
+            die("unknown tag");
     }
 }
 
@@ -981,10 +985,36 @@ void die(char * message) {
     exit(1);
 }
 
-/*
-struct item lisp_eval_step(struct to_eval exp) {
+struct maybe_item assoc_find(void * needle, struct cons * haystack) {
+    while (haystack) {
+        if (haystack->head.ptr == needle) return just(haystack->tail);
+        //TODO check that tail is a cons
+        else haystack = (struct cons *) haystack->tail.ptr;
+    }
+    return nothing;
 }
-*/
+
+struct item lisp_eval(struct item exp, struct cons * env) {
+    switch (exp.tag) {
+    case char_tag:
+    case int_tag:
+        return exp;
+    case sym_tag:
+        {
+            struct maybe_item result = assoc_find(exp.ptr, env);
+            if (result.present) return result.v;
+            else die("unbound symbol");
+        }
+    case cons_tag:
+        //TODO special forms and function call
+        break;
+    case obj_tag:
+        //TODO figure out what objs are needed
+        break;
+    default:
+        die("unknown tag");
+    }
+}
 
 /*
 //TODO figure out return values

@@ -43,6 +43,7 @@ char * layout_str(enum layout val);
 
 void * allocate_cons();
 
+//TODO move registers into heap roots
 struct registers {
     void ** code_block;
     unsigned int icount;
