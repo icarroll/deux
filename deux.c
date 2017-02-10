@@ -1,7 +1,5 @@
 #include <errno.h>
 #include <inttypes.h>
-#include <readline/history.h>
-#include <readline/readline.h>
 #include <setjmp.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,6 +9,9 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+#include <readline/history.h>
+#include <readline/readline.h>
 
 #include "deux.h"
 #include "mnemonics.h"
