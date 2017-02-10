@@ -266,29 +266,6 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     return header->data;
 }
 
-/*
-void add_root_in(struct heap * heap, void * new_root_ptr) {
-    struct block_header * root_block = heap->root_block;
-
-    void ** block_end = root_block->data + root_block->size;
-
-    void ** candidate;
-    for (candidate=root_block->data ; candidate < block_end ; candidate += 1) {
-        if (* candidate == NULL) {
-            * candidate = new_root_ptr;
-            return;
-        }
-    }
-
-    void ** new_block = allocate_in(heap, ROOT_BLOCK_SIZE, all_ptr_layout);
-    if (! new_block) die("can't allocate root block");
-
-    new_block[0] = root_block->data;
-    new_block[1] = new_root_ptr;
-    heap->root_block = get_header(new_block);
-}
-*/
-
 void make_heap(struct heap * heap, int size) {
     int rounded_size = round_to(getpagesize(), size);
 
@@ -324,12 +301,6 @@ void * allocate_allptr(int size) {
 void init_heap() {
     make_heap(& heap0, HEAP_SIZE);
 }
-
-/*
-void add_root(void * new_root) {
-    add_root_in(& heap0, new_root);
-}
-*/
 
 // end memory management
 
@@ -371,12 +342,9 @@ char * cons_tag_str(enum cons_tag val) {
 
 //TODO iterate over headers instead of datas
 void print_heap_in(struct heap * heap) {
-    /*
-    printf("memory=%x end=%x next=%x root_block=%x\n",
-           heap->memory, heap->end, heap->next, heap->root_block);
-    */
     printf("memory=%x end=%x next=%x\n",
            heap->memory, heap->end, heap->next);
+    //TODO print roots
     for (void * block=heap->memory + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
@@ -519,7 +487,7 @@ struct do_next run() {
             ((void **) regs.data_block[arg8_1])[arg8_2]
                 = regs.data_block[arg8_3];
             break;
-        //TODO for out-of-heap jumps, transfer out of vm
+        //TODO check for out-of-heap jumps
         case JUMP_FAR:
             regs.code_block = regs.data_block[arg8_1];
             regs.icount = untag(regs.data_block[arg8_2]);
@@ -977,7 +945,7 @@ struct item parse_tail_cons(char ** text_ptr) {
         else return temp.v;
     }
 
-    //skip_space(text_ptr);
+    // skip_space() has already been done at this point
     struct maybe_item maybe_head = parse_cons_item(text_ptr);
     if (! maybe_head.present) return nil;
 
