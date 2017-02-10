@@ -38,9 +38,15 @@ void print_mark_list(struct block_header * header) {
 
 void mark_in(struct heap * heap) {
     // mark roots and add to list
-    struct block_header * next_header = heap->root_block;
-    heap->root_block->marked = true;
-    struct block_header * last_header = heap->root_block;
+    struct block_header * next_header = heap->roots[SYMBOLS];
+    heap->roots[0]->marked = true;
+    struct block_header * last_header = heap->roots[SYMBOLS];
+
+    for (int ix=1 ; ix < NUM_ROOTS ; ix+=1) {
+        last_header->link_ptr = heap->roots[ix];
+        last_header->marked = true;
+        last_header = last_header->link_ptr;
+    }
 
     if (regs.code_block) {
         last_header->link_ptr = regs.code_block;
@@ -198,7 +204,11 @@ void collect_in(struct heap * heap) {
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
 
-    struct block_header * new_root = heap->root_block->link_ptr;
+    // record new root locations
+    for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
+        if (heap->roots[ix]) heap->new_roots[ix] = heap->roots[ix]->link_ptr;
+        else heap->new_roots[ix] = NULL;
+    }
 
     struct block_header * new_code_block;
     if (regs.code_block) {
@@ -214,7 +224,12 @@ void collect_in(struct heap * heap) {
     compact_in(heap);
 
     heap->next = new_next;
-    heap->root_block = new_root;
+
+    // record new root locations
+    for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
+        if (heap->new_roots[ix]) heap->roots[ix] = heap->new_roots[ix];
+    }
+
     if (regs.code_block) regs.code_block = new_code_block->data;
     if (regs.data_block) regs.data_block = new_data_block->data;
 }
@@ -251,6 +266,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     return header->data;
 }
 
+/*
 void add_root_in(struct heap * heap, void * new_root_ptr) {
     struct block_header * root_block = heap->root_block;
 
@@ -271,6 +287,7 @@ void add_root_in(struct heap * heap, void * new_root_ptr) {
     new_block[1] = new_root_ptr;
     heap->root_block = get_header(new_block);
 }
+*/
 
 void make_heap(struct heap * heap, int size) {
     int rounded_size = round_to(getpagesize(), size);
@@ -283,19 +300,17 @@ void make_heap(struct heap * heap, int size) {
     heap->end = memory + rounded_size;
     heap->next = memory;
 
-    void ** block = allocate_in(heap, ROOT_BLOCK_SIZE * sizeof(void *), all_ptr_layout);
-    if (! block) die("can't allocate root block");
-    heap->root_block = get_header(block);
+    heap->roots[SYMBOLS] = get_header(allocate_symbol_intern_node());
 }
 
-struct heap heap;
+struct heap heap0;
 
 void collect() {
-    collect_in(& heap);
+    collect_in(& heap0);
 }
 
 void * allocate(int size, enum layout layout) {
-    return allocate_in(& heap, size, layout);
+    return allocate_in(& heap0, size, layout);
 }
 
 void * allocate_noptr(int size) {
@@ -307,12 +322,14 @@ void * allocate_allptr(int size) {
 }
 
 void init_heap() {
-    make_heap(& heap, HEAP_SIZE);
+    make_heap(& heap0, HEAP_SIZE);
 }
 
+/*
 void add_root(void * new_root) {
-    add_root_in(& heap, new_root);
+    add_root_in(& heap0, new_root);
 }
+*/
 
 // end memory management
 
@@ -345,6 +362,8 @@ char * cons_tag_str(enum cons_tag val) {
         return "char";
     case int_tag:
         return "int";
+    case obj_tag:
+        return "obj";
     default:
         return "unhandled";
     }
@@ -352,8 +371,12 @@ char * cons_tag_str(enum cons_tag val) {
 
 //TODO iterate over headers instead of datas
 void print_heap_in(struct heap * heap) {
+    /*
     printf("memory=%x end=%x next=%x root_block=%x\n",
            heap->memory, heap->end, heap->next, heap->root_block);
+    */
+    printf("memory=%x end=%x next=%x\n",
+           heap->memory, heap->end, heap->next);
     for (void * block=heap->memory + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
@@ -397,7 +420,7 @@ void print_heap_in(struct heap * heap) {
 }
 
 void print_heap() {
-    print_heap_in(& heap);
+    print_heap_in(& heap0);
 }
 
 // end heap display
@@ -714,17 +737,18 @@ void create_test_sub() {
 
 // call a virtual machine subprogram from c
 void * call_virtual(int which, void * arg) {
-    //TODO
+    //TODO something about setting up the context to return to
 }
 
 // call c subprogram from virtual machine
 struct registers handle_jump_c(struct registers WHUT) {
-    //TODO
+    //TODO replace with specific opcodes
 }
 
 // end virtual machine
 
 // begin symbol trie
+//TODO reduce fanout to 16 by adding intermediate nodes
 
 void * allocate_symbol_intern_node() {
     void * temp = allocate_allptr(sizeof(struct symbol_intern_node));
@@ -734,12 +758,9 @@ void * allocate_symbol_intern_node() {
 
 struct symbol_intern_node * symbols;
 
-void * get_symbol_ref_n(char * name, int length) {
-    if (! symbols) {
-        symbols = allocate_symbol_intern_node();
-        add_root(symbols);
-    }
-    struct symbol_intern_node * node = symbols;
+void * get_symbol_ref_n_in(struct heap * heap, char * name, int length) {
+    struct symbol_intern_node * node;
+    node = (struct symbol_intern_node *) heap->roots[SYMBOLS]->data;
 
     for (int n=0 ; n < length ; n += 1) {
         struct symbol_intern_node * next_node = node->child[name[n]];
@@ -753,6 +774,10 @@ void * get_symbol_ref_n(char * name, int length) {
     }
 
     return (void *) node->name;
+}
+
+void * get_symbol_ref_n(char * name, int length) {
+    return get_symbol_ref_n_in(& heap0, name, length);
 }
 
 void * get_symbol_ref(char * name) {
@@ -810,6 +835,9 @@ void print_cons_item(struct item item) {
             if (cell) print_tail_cons(cell);
             fputc(')', stdout);
             break;
+        case obj_tag:
+            fprintf(stdout, "<obj>");
+            break;
     }
 }
 
@@ -820,6 +848,7 @@ void print_tail_cons(struct cons * cell) {
         case char_tag:
         case int_tag:
         case sym_tag:
+        case obj_tag:
             fputs(" . ", stdout);
             print_cons_item(cell->tail);
             break;
@@ -834,7 +863,7 @@ void print_tail_cons(struct cons * cell) {
 
 // end cons tree
 
-// begin parse
+// begin parse sexps
 
 jmp_buf abort_parse;
 
@@ -984,9 +1013,10 @@ void die(char * message) {
     exit(1);
 }
 
-void compile(struct cons * tree) {
-//TODO
+/*
+struct item lisp_eval_step(struct to_eval exp) {
 }
+*/
 
 /*
 //TODO figure out return values

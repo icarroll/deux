@@ -8,11 +8,17 @@ enum {
 
 static const int ALIGNMENT = 8;
 
+enum which_root {
+    SYMBOLS=0,
+    NUM_ROOTS,
+};
+
 struct heap {
     void * memory;
     void * end;
     void * next;
-    struct block_header * root_block;
+    struct block_header * roots[NUM_ROOTS];
+    struct block_header * new_roots[NUM_ROOTS];
 };
 
 enum layout {
@@ -43,6 +49,8 @@ struct registers {
     void ** data_block;
 };
 
+void * allocate_symbol_intern_node();
+
 struct symbol_intern_node {
     char * name;
     struct symbol_intern_node * child[256];
@@ -53,10 +61,11 @@ enum cons_tag {
     sym_tag,
     char_tag,
     int_tag,
+    obj_tag,
 };
 
 static bool is_ptr_tag(enum cons_tag tag) {
-    return tag == cons_tag || tag == sym_tag;
+    return tag == cons_tag || tag == sym_tag || tag == obj_tag;
 }
 
 struct item {
