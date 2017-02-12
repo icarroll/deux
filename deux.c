@@ -1035,6 +1035,10 @@ bool is_cons(struct item item) {
     return item.tag == cons_tag;
 }
 
+struct item cons_to_item(struct cons * cell) {
+    return (struct item) {cons_tag, cell};
+}
+
 struct item lisp_eval(struct item exp, struct cons * env) {
     switch (exp.tag) {
     case char_tag:
@@ -1055,8 +1059,9 @@ struct item lisp_eval(struct item exp, struct cons * env) {
             struct cons * cell = get_cell(exp);
             if (! cell) return nil;
             if (cell->head.tag == sym_tag) {
+                void * symbol = cell->head.ptr;
                 // "quote" special form
-                if (cell->head.ptr == get_symbol_ref("quote")) {
+                if (symbol == get_symbol_ref("quote")) {
                     if (is_nil(cell->tail)) throw_eval_error("bad quote");
                     if (! is_cons(cell->tail)) throw_eval_error("bad quote");
                     struct cons * tail = tail_cons(cell);
@@ -1065,7 +1070,7 @@ struct item lisp_eval(struct item exp, struct cons * env) {
                     return tail->head;
                 }
                 // "if" special form
-                if (cell->head.ptr == get_symbol_ref("if")) {
+                if (symbol == get_symbol_ref("if")) {
                     if (! is_cons(cell->tail)) throw_eval_error("bad if");
                     struct cons * clause = tail_cons(cell);
 do_if:
@@ -1076,7 +1081,7 @@ do_if:
                         return lisp_eval(clause->head, env);
                     }
                     // two or more clauses ->
-                    // eval first, if true eval and return second
+                    // if first evals true then return eval of second
                     // otherwise skip to next clause(s)
                     struct item condition = lisp_eval(clause->head, env);
                     if (condition.ptr) {
@@ -1086,9 +1091,24 @@ do_if:
                     clause = tail_cons(tail_cons(clause));
                     goto do_if;
                 }
-                else throw_eval_error("oops unhandled symbol"); //XXX temporary
+                // "fn" special form
+                if (symbol == get_symbol_ref("fn")) {
+                    if (! is_cons(cell->tail)) throw_eval_error("bad fn");
+                    if (is_nil(cell->tail)) throw_eval_error("bad fn");
+                    struct cons * tail = tail_cons(cell);
+                    struct item argspec = tail->head;
+                    struct item body = tail->tail;
+                    return cons(sym("#<subprogram>"),
+                           cons(argspec,
+                           cons(body,
+                           cons(cons_to_item(env),
+                                nil))));
+                }
+
+                throw_eval_error("oops unhandled symbol"); //XXX temporary
             }
-            else throw_eval_error("oops not symbol"); //XXX temporary
+
+            throw_eval_error("oops not symbol"); //XXX temporary
         }
     default:
         die("unknown tag in eval");
