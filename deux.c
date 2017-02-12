@@ -786,9 +786,11 @@ struct cons * conscell(struct item head, struct item tail) {
     cell->tail = tail;
     return cell;
 }
-
+struct item cons_to_item(struct cons * cell) {
+    return (struct item) {cons_tag, cell};
+}
 struct item cons(struct item head, struct item tail) {
-    return (struct item) {cons_tag, conscell(head, tail)};
+    return cons_to_item(conscell(head, tail));
 }
 
 void print_cons_item(struct item item) {
@@ -1035,10 +1037,6 @@ bool is_cons(struct item item) {
     return item.tag == cons_tag;
 }
 
-struct item cons_to_item(struct cons * cell) {
-    return (struct item) {cons_tag, cell};
-}
-
 struct item lisp_eval(struct item exp, struct cons * env) {
     switch (exp.tag) {
     case char_tag:
@@ -1104,11 +1102,50 @@ do_if:
                            cons(cons_to_item(env),
                                 nil))));
                 }
-
-                throw_eval_error("oops unhandled symbol"); //XXX temporary
+                // "rewrite" special form
+                if (symbol == get_symbol_ref("rewrite")) {
+                    //TODO
+                    throw_eval_error("no rewrite yet");
+                }
+                // "new" special form
+                if (symbol == get_symbol_ref("new")) {
+                    //TODO
+                    throw_eval_error("no new yet");
+                }
+                // "set" special form
+                if (symbol == get_symbol_ref("set")) {
+                    //TODO
+                    throw_eval_error("no set yet");
+                }
             }
 
-            throw_eval_error("oops not symbol"); //XXX temporary
+            // not special form, so evaluate all and invoke
+            {
+                struct cons * current_read = cell;
+                struct item value;
+                struct cons * current_write;
+                struct cons * next_write;
+
+                struct item evaluated = cons(nil, nil);
+                current_write = get_cell(evaluated);
+
+                while (is_cons(current_read->tail) && current_read->tail.ptr) {
+                    current_write->head = lisp_eval(current_read->head, env);
+                    current_read = tail_cons(current_read);
+                    current_write->tail = cons(nil, nil);
+                    current_write = tail_cons(current_write);
+                }
+
+                current_write->head = lisp_eval(current_read->head, env);
+                if (current_read->tail.ptr) {
+                    current_write->tail = lisp_eval(current_read->tail, env);
+                }
+                else current_write->tail = nil;
+
+                print_cons_item(evaluated); //XXX
+                putchar('\n'); //XXX
+                return nil; //XXX
+            }
         }
     default:
         die("unknown tag in eval");
