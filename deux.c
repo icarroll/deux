@@ -813,7 +813,7 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "<obj>");
             break;
         default:
-            die("unknown tag");
+            die("unknown tag in print cons item");
     }
 }
 
@@ -835,7 +835,7 @@ void print_tail_cons(struct cons * cell) {
             }
             break;
         default:
-            die("unknown tag");
+            die("unknown tag in print tail cons");
     }
 }
 
@@ -933,6 +933,15 @@ struct maybe_item parse_cons_item(char ** text_ptr) {
         case '.':
             return nothing;
 
+        case '\'':
+            {
+                * text_ptr += 1;
+                skip_space(text_ptr);
+                struct maybe_item quoted = parse_cons_item(text_ptr);
+                if (! quoted.present) throw_parse_error("expected quoted item");
+                return just(cons(sym("quote"), cons(quoted.v, nil)));
+            }
+
         default:   // anything else is a symbol
             if (symbol_char(* text)) {
                 char * cur = text;
@@ -991,7 +1000,7 @@ void die(char * message) {
     exit(1);
 }
 
-struct maybe_item assoc_find(void * needle, struct cons * haystack) {
+struct maybe_item assoc_get(struct cons * haystack, void * needle) {
     while (haystack) {
         //TODO check that head is a cons
         struct cons * candidate = (struct cons *) haystack->head.ptr;
@@ -1009,40 +1018,83 @@ void throw_eval_error(char * message) {
     longjmp(abort_eval, 1);
 }
 
-struct item lisp_eval(struct item orig_exp, struct item orig_env) {
-    struct cons * result_stack = conscell(nil, nil);
-    struct cons * todo_queue = conscell(orig_exp, nil);
-    struct cons * env_stack = conscell(orig_env, nil);
+struct cons * get_cell(struct item cons_item) {
+    return (struct cons *) cons_item.ptr;
+}
+struct cons * head_cons(struct cons * cell) {
+    return (struct cons *) cell->head.ptr;
+}
+struct cons * tail_cons(struct cons * cell) {
+    return (struct cons *) cell->tail.ptr;
+}
 
-    while (todo_queue) {
-        struct item exp = todo_queue->head;
-        todo_queue = todo_queue->tail.ptr; //TODO check for cons_tag
-        struct cons * env = env_stack->head.ptr;  //TODO check for cons_tag
+bool is_nil(struct item item) {
+    return item.tag == cons_tag && item.ptr == NULL;
+}
+bool is_cons(struct item item) {
+    return item.tag == cons_tag;
+}
 
-        switch (exp.tag) {
-        case char_tag:
-        case int_tag:
-            result_stack->head = exp;
-            break;
-        case sym_tag:
-            {
-                struct maybe_item value = assoc_find(exp.ptr, env);
-                if (value.present) result_stack->head = value.v;
-                else throw_eval_error("unbound symbol");
-            }
-            break;
-        case cons_tag:
-            //TODO special forms and function call
-            break;
-        case obj_tag:
-            //TODO figure out what objs are needed
-            break;
-        default:
-            die("unknown tag");
+struct item lisp_eval(struct item exp, struct cons * env) {
+    switch (exp.tag) {
+    case char_tag:
+    case int_tag:
+    case obj_tag:   // objs should probably self-evaluate
+        return exp;
+    case sym_tag:
+        {
+            struct maybe_item value = assoc_get(env, exp.ptr);
+            if (value.present) return value.v;
+            else throw_eval_error("unbound symbol");
         }
+    case cons_tag:
+        // check for special form
+        // if special form, invoke
+        // if not special form, eval each item and invoke
+        {
+            struct cons * cell = get_cell(exp);
+            if (! cell) return nil;
+            if (cell->head.tag == sym_tag) {
+                // "quote" special form
+                if (cell->head.ptr == get_symbol_ref("quote")) {
+                    if (is_nil(cell->tail)) throw_eval_error("bad quote");
+                    if (! is_cons(cell->tail)) throw_eval_error("bad quote");
+                    struct cons * tail = tail_cons(cell);
+                    if (! is_cons(tail->tail)) throw_eval_error("bad quote");
+                    if (! is_nil(tail->tail)) throw_eval_error("bad quote");
+                    return tail->head;
+                }
+                // "if" special form
+                if (cell->head.ptr == get_symbol_ref("if")) {
+                    if (! is_cons(cell->tail)) throw_eval_error("bad if");
+                    struct cons * clause = tail_cons(cell);
+do_if:
+                    // no clauses -> no op
+                    if (! clause) return nil;
+                    // one clause -> eval and return
+                    if (is_nil(clause->tail)) {
+                        return lisp_eval(clause->head, env);
+                    }
+                    // two or more clauses ->
+                    // eval first, if true eval and return second
+                    // otherwise skip to next clause(s)
+                    struct item condition = lisp_eval(clause->head, env);
+                    if (condition.ptr) {
+                        struct item action = tail_cons(clause)->head;
+                        return lisp_eval(action, env);
+                    }
+                    clause = tail_cons(tail_cons(clause));
+                    goto do_if;
+                }
+                else throw_eval_error("oops unhandled symbol"); //XXX temporary
+            }
+            else throw_eval_error("oops not symbol"); //XXX temporary
+        }
+    default:
+        die("unknown tag in eval");
     }
 
-    return result_stack->head; //TODO check for length 1
+    die("something went wrong"); //XXX temporary
 }
 
 void print_regs() {
@@ -1161,7 +1213,7 @@ int main(int argc, char * argv[]) {
 
     init_heap();
 
-    struct item dummy_env = cons(cons(sym("x"), num(47)), cons(cons(sym("fred"), ch('q')), nil));
+    struct cons * dummy_env = parse("((x . 47) (fred . #\\q))").v.ptr;
 
     char * line;
     while(line = readline("al> ")) {
