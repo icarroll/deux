@@ -90,4 +90,8 @@ void print_tail_cons(struct cons * cell);
 
 void die(char * message);
 
+struct item lisp_eval(struct item exp, struct cons * env);
+
+struct item lisp_apply(struct item sub, struct item args);
+
 #endif // DEUX_H

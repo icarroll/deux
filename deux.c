@@ -1002,6 +1002,8 @@ void die(char * message) {
     exit(1);
 }
 
+// lisp interpreter
+
 struct maybe_item assoc_get(struct cons * haystack, void * needle) {
     while (haystack) {
         //TODO check that head is a cons
@@ -1121,18 +1123,15 @@ do_if:
 
             // not special form, so evaluate all and invoke
             {
+                struct cons * evaluated = conscell(nil, nil);
+
                 struct cons * current_read = cell;
-                struct item value;
-                struct cons * current_write;
-                struct cons * next_write;
-
-                struct item evaluated = cons(nil, nil);
-                current_write = get_cell(evaluated);
-
+                struct cons * current_write = evaluated;
                 while (is_cons(current_read->tail) && current_read->tail.ptr) {
                     current_write->head = lisp_eval(current_read->head, env);
-                    current_read = tail_cons(current_read);
                     current_write->tail = cons(nil, nil);
+
+                    current_read = tail_cons(current_read);
                     current_write = tail_cons(current_write);
                 }
 
@@ -1142,17 +1141,76 @@ do_if:
                 }
                 else current_write->tail = nil;
 
-                print_cons_item(evaluated); //XXX
-                putchar('\n'); //XXX
-                return nil; //XXX
+                return lisp_apply(evaluated->head, evaluated->tail);
             }
         }
     default:
         die("unknown tag in eval");
     }
 
-    die("something went wrong"); //XXX temporary
+    die("internal error in eval");
 }
+
+bool match_sym(struct item item, char * str) {
+    return item.tag == sym_tag && item.ptr == get_symbol_ref(str);
+}
+
+struct cons * extend_env(struct cons * env, struct item argspec, struct item args) {
+    if (! is_cons(argspec)) {
+        if (argspec.tag == sym_tag) {
+            return conscell(cons(argspec, args), cons_to_item(env));
+        }
+
+        throw_eval_error("bad argspec");
+    }
+
+    if (! is_cons(args)) throw_eval_error("bad args");
+
+    struct cons * new_env = env;
+    struct cons * vars = get_cell(argspec);
+    struct cons * vals = get_cell(args);
+
+    while (vars || vals) {
+        if (! vars || ! vals) throw_eval_error("arg mismatch");
+
+        struct item var = vars->head;
+        //TODO allow destructuring bind
+        if (var.tag != sym_tag) throw_eval_error("bad argspec");
+        struct item val = vals->head;
+        new_env = conscell(cons(var, val), cons_to_item(new_env));
+
+        vars = tail_cons(vars);
+        vals = tail_cons(vals);
+    }
+    return new_env;
+}
+
+struct item lisp_apply(struct item sub, struct item args) {
+    struct cons * current = get_cell(sub);
+    if (is_cons(sub) && match_sym(current->head, "#<subprogram>")) {
+        current = tail_cons(current);
+        struct item argspec = current->head;
+        current = tail_cons(current);
+        struct cons * body = head_cons(current);
+        current = tail_cons(current);
+        struct cons * env = head_cons(current);
+
+        struct cons * new_env = extend_env(env, argspec, args);
+        struct item result = nil;
+        while (body) {
+            result = lisp_eval(body->head, new_env);
+            body = tail_cons(body);
+        }
+
+        return result;
+    }
+
+    throw_eval_error("bad subprogram");
+}
+
+// end lisp interpreter
+
+// monitor
 
 void print_regs() {
     printf("data=0x%08x code=0x%08x instruction=%u\n",
@@ -1264,6 +1322,8 @@ void monitor() {
 quit:
     putchar('\n');
 }
+
+// end monitor
 
 int main(int argc, char * argv[]) {
     using_history();
