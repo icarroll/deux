@@ -1190,7 +1190,9 @@ struct cons * extend_env(struct cons * env, struct item argspec,
                          struct item args) {
     if (! is_cons(argspec)) {
         if (argspec.tag == sym_tag) {
-            return conscell(cons(argspec, args), cons_to_item(env));
+            return conscell(cons(nil, nil),
+                   cons(cons(argspec, args),
+                        cons_to_item(env)));
         }
 
         throw_eval_error("bad argspec");
@@ -1215,7 +1217,7 @@ struct cons * extend_env(struct cons * env, struct item argspec,
         if (! is_cons(vals->tail)) throw_eval_error("bad args");
         vals = tail_cons(vals);
     }
-    return new_env;
+    return conscell(cons(nil, nil), cons_to_item(new_env));
 }
 
 struct item lisp_apply(struct item sub, struct item args) {
@@ -1363,7 +1365,7 @@ int main(int argc, char * argv[]) {
 
     init_heap();
 
-    struct cons * dummy_env = parse("((x . 47) (fred . #\\q))").v.ptr;
+    struct cons * initial_env = conscell(cons(nil, nil), nil);
 
     char * line;
     while(line = readline("al> ")) {
@@ -1375,7 +1377,7 @@ int main(int argc, char * argv[]) {
                 printf("eval error\n");
             }
             else {
-                struct item result = lisp_eval(maybe_sexp.v, dummy_env);
+                struct item result = lisp_eval(maybe_sexp.v, initial_env);
                 print_cons_item(result);
                 putchar('\n');
             }
