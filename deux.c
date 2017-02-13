@@ -807,6 +807,11 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "%s", (char *) item.ptr);
             break;
         case cons_tag:
+            if (cell && cell->head.tag == sym_tag
+                && ((char *) cell->head.ptr)[0] == '#') {
+                fprintf(stdout, cell->head.ptr);
+                break;
+            }
             fputc('(', stdout);
             if (cell) print_tail_cons(cell);
             fputc(')', stdout);
@@ -1022,6 +1027,20 @@ void throw_eval_error(char * message) {
     longjmp(abort_eval, 1);
 }
 
+void assoc_set(struct cons * haystack, void * needle, struct item value) {
+    while (haystack) {
+        //TODO check that head is a cons
+        struct cons * candidate = (struct cons *) haystack->head.ptr;
+        if (candidate->head.ptr == needle) {
+            candidate->tail = value;
+            return;
+        }
+        //TODO check that tail is a cons
+        else haystack = (struct cons *) haystack->tail.ptr;
+    }
+    throw_eval_error("unbound symbol");
+}
+
 struct cons * get_cell(struct item cons_item) {
     return (struct cons *) cons_item.ptr;
 }
@@ -1111,13 +1130,25 @@ do_if:
                 }
                 // "new" special form
                 if (symbol == get_symbol_ref("new")) {
-                    //TODO
-                    throw_eval_error("no new yet");
+                    //TODO actually check for errors
+                    struct cons * current = tail_cons(cell);
+                    struct item var = current->head;
+                    current = tail_cons(current);
+                    struct item val = lisp_eval(current->head, env);
+                    struct item snd = env->tail;
+                    struct item ins = cons(cons(var, val), snd);
+                    env->tail = ins;
+                    return val;
                 }
                 // "set" special form
                 if (symbol == get_symbol_ref("set")) {
-                    //TODO
-                    throw_eval_error("no set yet");
+                    //TODO actually check for errors
+                    struct cons * current = tail_cons(cell);
+                    struct item var = current->head;
+                    current = tail_cons(current);
+                    struct item val = lisp_eval(current->head, env);
+                    assoc_set(env, var.ptr, val);
+                    return val;
                 }
             }
 
@@ -1155,7 +1186,8 @@ bool match_sym(struct item item, char * str) {
     return item.tag == sym_tag && item.ptr == get_symbol_ref(str);
 }
 
-struct cons * extend_env(struct cons * env, struct item argspec, struct item args) {
+struct cons * extend_env(struct cons * env, struct item argspec,
+                         struct item args) {
     if (! is_cons(argspec)) {
         if (argspec.tag == sym_tag) {
             return conscell(cons(argspec, args), cons_to_item(env));
