@@ -949,6 +949,33 @@ struct maybe_item parse_cons_item(char ** text_ptr) {
                 return just(cons(sym("quote"), cons(quoted.v, nil)));
             }
 
+        case '`':
+            {
+                * text_ptr += 1;
+                skip_space(text_ptr);
+                struct maybe_item quoted = parse_cons_item(text_ptr);
+                if (! quoted.present) throw_parse_error("expected quasiquoted item");
+                return just(cons(sym("quasiquote"), cons(quoted.v, nil)));
+            }
+
+        case ',':
+            {
+                * text_ptr += 1;
+                if (** text_ptr == '@') {
+                    * text_ptr += 1;
+                    skip_space(text_ptr);
+                    struct maybe_item quoted = parse_cons_item(text_ptr);
+                    if (! quoted.present) throw_parse_error("expected unquoted item");
+                    return just(cons(sym("unquote-splicing"), cons(quoted.v, nil)));
+                }
+                else {
+                    skip_space(text_ptr);
+                    struct maybe_item quoted = parse_cons_item(text_ptr);
+                    if (! quoted.present) throw_parse_error("expected unquoted item");
+                    return just(cons(sym("unquote"), cons(quoted.v, nil)));
+                }
+            }
+
         default:   // anything else is a symbol
             if (symbol_char(* text)) {
                 char * cur = text;
