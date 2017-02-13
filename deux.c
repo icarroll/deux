@@ -1051,11 +1051,19 @@ struct cons * tail_cons(struct cons * cell) {
     return (struct cons *) cell->tail.ptr;
 }
 
+struct item head_item(struct item cons_item) {
+    return cons_to_item(head_cons(get_cell(cons_item)));
+}
+
 bool is_nil(struct item item) {
     return item.tag == cons_tag && item.ptr == NULL;
 }
 bool is_cons(struct item item) {
     return item.tag == cons_tag;
+}
+
+bool match_sym(struct item item, char * str) {
+    return item.tag == sym_tag && item.ptr == get_symbol_ref(str);
 }
 
 struct item lisp_eval(struct item exp, struct cons * env) {
@@ -1125,8 +1133,16 @@ do_if:
                 }
                 // "rewrite" special form
                 if (symbol == get_symbol_ref("rewrite")) {
-                    //TODO
-                    throw_eval_error("no rewrite yet");
+                    if (! is_cons(cell->tail)) throw_eval_error("bad rewrite");
+                    if (is_nil(cell->tail)) throw_eval_error("bad rewrite");
+                    struct cons * tail = tail_cons(cell);
+                    struct item argspec = tail->head;
+                    struct item body = tail->tail;
+                    return cons(sym("#<rewrite>"),
+                           cons(argspec,
+                           cons(body,
+                           cons(cons_to_item(env),
+                                nil))));
                 }
                 // "new" special form
                 if (symbol == get_symbol_ref("new")) {
@@ -1152,6 +1168,41 @@ do_if:
                 }
             }
 
+            // not special form so evaluate and invoke
+            {
+                struct item to_invoke = lisp_eval(cell->head, env);
+                if (is_cons(to_invoke)) {
+                   if (match_sym(get_cell(to_invoke)->head, "#<subprogram>")) {
+                       struct cons * evaluated = conscell(nil, nil);
+
+                       struct cons * current_read = cell;
+                       struct cons * current_write = evaluated;
+                       while (is_cons(current_read->tail) && current_read->tail.ptr) {
+                           current_write->head = lisp_eval(current_read->head, env);
+                           current_write->tail = cons(nil, nil);
+
+                           current_read = tail_cons(current_read);
+                           current_write = tail_cons(current_write);
+                       }
+
+                       current_write->head = lisp_eval(current_read->head, env);
+                       if (current_read->tail.ptr) {
+                           current_write->tail = lisp_eval(current_read->tail, env);
+                       }
+                       else current_write->tail = nil;
+
+                       return lisp_apply(to_invoke, evaluated->tail);
+                   }
+
+                   if (match_sym(get_cell(to_invoke)->head, "#<rewrite>")) {
+                       return lisp_eval(lisp_apply(to_invoke, cell->tail), env);
+                   }
+                }
+            }
+
+            throw_eval_error("bad invoke");
+
+            /*
             // not special form, so evaluate all and invoke
             {
                 struct cons * evaluated = conscell(nil, nil);
@@ -1174,16 +1225,13 @@ do_if:
 
                 return lisp_apply(evaluated->head, evaluated->tail);
             }
+            */
         }
     default:
         die("unknown tag in eval");
     }
 
     die("internal error in eval");
-}
-
-bool match_sym(struct item item, char * str) {
-    return item.tag == sym_tag && item.ptr == get_symbol_ref(str);
 }
 
 struct cons * extend_env(struct cons * env, struct item argspec,
@@ -1220,9 +1268,30 @@ struct cons * extend_env(struct cons * env, struct item argspec,
     return conscell(cons(nil, nil), cons_to_item(new_env));
 }
 
-struct item lisp_apply(struct item sub, struct item args) {
-    struct cons * current = get_cell(sub);
-    if (is_cons(sub) && match_sym(current->head, "#<subprogram>")) {
+struct item lisp_apply(struct item to_invoke, struct item args) {
+    struct cons * current = get_cell(to_invoke);
+
+    current = tail_cons(current);
+    struct item argspec = current->head;
+    current = tail_cons(current);
+    struct cons * body = head_cons(current);
+    current = tail_cons(current);
+    struct cons * env = head_cons(current);
+
+    struct cons * new_env = extend_env(env, argspec, args);
+    struct item result = nil;
+    while (body) {
+        result = lisp_eval(body->head, new_env);
+        body = tail_cons(body);
+    }
+
+    return result;
+}
+
+//TODO
+struct item lisp_rewrite(struct item rew, struct item args) {
+    struct cons * current = get_cell(rew);
+    if (is_cons(rew) && match_sym(current->head, "#<rewrite>")) {
         current = tail_cons(current);
         struct item argspec = current->head;
         current = tail_cons(current);
@@ -1240,7 +1309,7 @@ struct item lisp_apply(struct item sub, struct item args) {
         return result;
     }
 
-    throw_eval_error("bad subprogram");
+    throw_eval_error("bad rewrite");
 }
 
 // end lisp interpreter
