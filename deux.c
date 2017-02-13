@@ -1180,6 +1180,7 @@ struct cons * extend_env(struct cons * env, struct item argspec, struct item arg
         new_env = conscell(cons(var, val), cons_to_item(new_env));
 
         vars = tail_cons(vars);
+        if (! is_cons(vals->tail)) throw_eval_error("bad args");
         vals = tail_cons(vals);
     }
     return new_env;
