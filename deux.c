@@ -1324,6 +1324,15 @@ struct item builtin_add(struct item args) {
     return num(n);
 }
 
+int gensym_counter = 1;
+struct item builtin_gensym(struct item args) {
+    if (! is_nil(args)) throw_eval_error("bad gensym arg");
+    void * str = allocate_noptr(12);
+    snprintf(str, 12, "#gensym%04u", gensym_counter);
+    gensym_counter += 1;
+    return (struct item) {sym_tag, str};
+}
+
 struct item lisp_apply(struct item to_invoke, struct item args) {
     struct cons * current = get_cell(to_invoke);
 
@@ -1332,9 +1341,10 @@ struct item lisp_apply(struct item to_invoke, struct item args) {
     current = tail_cons(current);
     // at this point, current == tail_cons(tail_cons(get_cell(to_invoke)))
     if (current->head.tag == sym_tag) {
-        void * candidate = current->head.ptr;
-        if (candidate == get_symbol_ref("#<cons>")) return builtin_cons(args);
-        if (candidate == get_symbol_ref("#<+>")) return builtin_add(args);
+        void * builtin = current->head.ptr;
+        if (builtin == get_symbol_ref("#<cons>")) return builtin_cons(args);
+        if (builtin == get_symbol_ref("#<+>")) return builtin_add(args);
+        if (builtin == get_symbol_ref("#<gensym>")) return builtin_gensym(args);
         throw_eval_error("bad builtin");
     }
     struct cons * body = head_cons(current);
@@ -1509,7 +1519,8 @@ int main(int argc, char * argv[]) {
         = conscell(cons(nil, nil),
                    cons(cons(sym("cons"), builtin("#<cons>")),
                    cons(cons(sym("+"), builtin("#<+>")),
-                        nil)));
+                   cons(cons(sym("gensym"), builtin("#<gensym>")),
+                        nil))));
 
     char * line;
     while(line = readline("al> ")) {
