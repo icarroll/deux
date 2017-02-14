@@ -1036,6 +1036,13 @@ void die(char * message) {
 
 // lisp interpreter
 
+jmp_buf abort_eval;
+
+void throw_eval_error(char * message) {
+    printf("%s\n", message);
+    longjmp(abort_eval, 1);
+}
+
 struct maybe_item assoc_get(struct cons * haystack, void * needle) {
     while (haystack) {
         //TODO check that head is a cons
@@ -1045,13 +1052,6 @@ struct maybe_item assoc_get(struct cons * haystack, void * needle) {
         else haystack = (struct cons *) haystack->tail.ptr;
     }
     return nothing;
-}
-
-jmp_buf abort_eval;
-
-void throw_eval_error(char * message) {
-    printf("%s\n", message);
-    longjmp(abort_eval, 1);
 }
 
 void assoc_set(struct cons * haystack, void * needle, struct item value) {
@@ -1204,8 +1204,10 @@ do_if:
 
                        struct cons * current_read = cell;
                        struct cons * current_write = evaluated;
-                       while (is_cons(current_read->tail) && current_read->tail.ptr) {
-                           current_write->head = lisp_eval(current_read->head, env);
+                       while (is_cons(current_read->tail)
+                              && current_read->tail.ptr) {
+                           current_write->head
+                               = lisp_eval(current_read->head, env);
                            current_write->tail = cons(nil, nil);
 
                            current_read = tail_cons(current_read);
@@ -1214,7 +1216,8 @@ do_if:
 
                        current_write->head = lisp_eval(current_read->head, env);
                        if (current_read->tail.ptr) {
-                           current_write->tail = lisp_eval(current_read->tail, env);
+                           current_write->tail
+                               = lisp_eval(current_read->tail, env);
                        }
                        else current_write->tail = nil;
 
@@ -1295,12 +1298,40 @@ struct cons * extend_env(struct cons * env, struct item argspec,
     return conscell(cons(nil, nil), cons_to_item(new_env));
 }
 
+struct item builtin_cons(struct item args) {
+    struct item hd = nil;
+    struct item tl = nil;
+    return cons(hd, tl);
+}
+
+struct item builtin_add(struct item args) {
+    uint32_t n = 0;
+    while (args.ptr) {
+        if (args.tag != cons_tag) throw_eval_error("bad add arg");
+
+        struct cons * cell = get_cell(args);
+
+        if (cell->head.tag == int_tag) n += (uint32_t) cell->head.ptr;
+        else throw_eval_error("add non-number");
+
+        args = cell->tail;
+    }
+    return num(n);
+}
+
 struct item lisp_apply(struct item to_invoke, struct item args) {
     struct cons * current = get_cell(to_invoke);
 
     current = tail_cons(current);
     struct item argspec = current->head;
     current = tail_cons(current);
+    // at this point, current == tail_cons(tail_cons(get_cell(to_invoke)))
+    if (current->head.tag == sym_tag) {
+        void * candidate = current->head.ptr;
+        if (candidate == get_symbol_ref("#<cons>")) return builtin_cons(args);
+        if (candidate == get_symbol_ref("#<+>")) return builtin_add(args);
+        throw_eval_error("bad builtin");
+    }
     struct cons * body = head_cons(current);
     current = tail_cons(current);
     struct cons * env = head_cons(current);
@@ -1456,12 +1487,24 @@ quit:
 
 // end monitor
 
+struct item builtin(char * str) {
+    return cons(sym("#<subprogram>"),
+           cons(sym(""),
+           cons(sym(str),
+           cons(nil,
+                nil))));
+}
+
 int main(int argc, char * argv[]) {
     using_history();
 
     init_heap();
 
-    struct cons * initial_env = conscell(cons(nil, nil), nil);
+    struct cons * initial_env
+        = conscell(cons(nil, nil),
+                   cons(cons(sym("cons"), builtin("#<cons>")),
+                   cons(cons(sym("+"), builtin("#<+>")),
+                        nil)));
 
     char * line;
     while(line = readline("al> ")) {
