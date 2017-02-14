@@ -1326,12 +1326,13 @@ struct item builtin_add(struct item args) {
     return num(n);
 }
 
+char gensym_string[] = "#gensym";
 unsigned int gensym_counter = 1;
 struct item builtin_gensym(struct item args) {
     if (! is_nil(args)) throw_eval_error("bad gensym arg");
     int counter_digits = snprintf(0, 0, "%u", gensym_counter);
-    void * str = allocate_noptr(8 + counter_digits);
-    snprintf(str, 8 + counter_digits, "#gensym%u", gensym_counter);
+    void * str = allocate_noptr(sizeof(gensym_string) + counter_digits);
+    snprintf(str, sizeof(gensym_string) + counter_digits, "%s%u", gensym_string, gensym_counter);
     gensym_counter += 1;
     return (struct item) {sym_tag, str};
 }
