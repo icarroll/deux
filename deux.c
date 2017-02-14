@@ -1299,8 +1299,13 @@ struct cons * extend_env(struct cons * env, struct item argspec,
 }
 
 struct item builtin_cons(struct item args) {
-    struct item hd = nil;
-    struct item tl = nil;
+    if (args.tag != cons_tag) throw_eval_error("bad cons arg");
+    if (! args.ptr) throw_eval_error("bad cons arg");
+    struct item hd = get_cell(args)->head;
+    if (get_cell(args)->tail.tag != cons_tag) throw_eval_error("bad cons arg");
+    if (! get_cell(args)->tail.ptr) throw_eval_error("bad cons arg");
+    struct item tl = tail_cons(get_cell(args))->head;
+    if (! is_nil(tail_cons(get_cell(args))->tail)) throw_eval_error("bad cons arg");
     return cons(hd, tl);
 }
 
