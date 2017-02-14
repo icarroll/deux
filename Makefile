@@ -11,10 +11,12 @@ all: deux
 
 deux: deux.o mnemonics.o
 
--include $(DEP)
+deux.c: mnemonics.h
 
 mnemonics.h mnemonics.c: mnemonics.py
 	python mnemonics.py
+
+-include $(DEP)
 
 .PHONY: debug debug_do clean
 
