@@ -1305,7 +1305,9 @@ struct item builtin_cons(struct item args) {
     if (get_cell(args)->tail.tag != cons_tag) throw_eval_error("bad cons arg");
     if (! get_cell(args)->tail.ptr) throw_eval_error("bad cons arg");
     struct item tl = tail_cons(get_cell(args))->head;
-    if (! is_nil(tail_cons(get_cell(args))->tail)) throw_eval_error("bad cons arg");
+    if (! is_nil(tail_cons(get_cell(args))->tail)) {
+        throw_eval_error("bad cons arg");
+    }
     return cons(hd, tl);
 }
 
@@ -1324,11 +1326,12 @@ struct item builtin_add(struct item args) {
     return num(n);
 }
 
-int gensym_counter = 1;
+unsigned int gensym_counter = 1;
 struct item builtin_gensym(struct item args) {
     if (! is_nil(args)) throw_eval_error("bad gensym arg");
-    void * str = allocate_noptr(12);
-    snprintf(str, 12, "#gensym%04u", gensym_counter);
+    int counter_digits = snprintf(0, 0, "%u", gensym_counter);
+    void * str = allocate_noptr(8 + counter_digits);
+    snprintf(str, 8 + counter_digits, "#gensym%u", gensym_counter);
     gensym_counter += 1;
     return (struct item) {sym_tag, str};
 }
@@ -1359,30 +1362,6 @@ struct item lisp_apply(struct item to_invoke, struct item args) {
     }
 
     return result;
-}
-
-//TODO
-struct item lisp_rewrite(struct item rew, struct item args) {
-    struct cons * current = get_cell(rew);
-    if (is_cons(rew) && match_sym(current->head, "#<rewrite>")) {
-        current = tail_cons(current);
-        struct item argspec = current->head;
-        current = tail_cons(current);
-        struct cons * body = head_cons(current);
-        current = tail_cons(current);
-        struct cons * env = head_cons(current);
-
-        struct cons * new_env = extend_env(env, argspec, args);
-        struct item result = nil;
-        while (body) {
-            result = lisp_eval(body->head, new_env);
-            body = tail_cons(body);
-        }
-
-        return result;
-    }
-
-    throw_eval_error("bad rewrite");
 }
 
 // end lisp interpreter
