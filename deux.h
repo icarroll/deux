@@ -10,6 +10,7 @@ static const int ALIGNMENT = 8;
 
 enum which_root {
     SYMBOLS=0,
+    LISP_ENV,
     NUM_ROOTS,
 };
 
@@ -19,6 +20,7 @@ struct heap {
     void * next;
     struct block_header * roots[NUM_ROOTS];
     struct block_header * new_roots[NUM_ROOTS];
+    void * start[];
 };
 
 enum layout {

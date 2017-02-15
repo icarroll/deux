@@ -125,8 +125,8 @@ void * following_block(void * block) {
 }
 
 void * compute_forward_addrs_in(struct heap * heap) {
-    void * next_free_addr = heap->memory;
-    for (void * block=heap->memory + hdr_sz
+    void * next_free_addr = heap->start;
+    for (void * block=heap->start + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -141,7 +141,7 @@ void * compute_forward_addrs_in(struct heap * heap) {
 
 void update_pointers_in(struct heap * heap) {
     // scan over heap
-    for (void * block=heap->memory + hdr_sz
+    for (void * block=heap->start + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -182,7 +182,7 @@ void update_pointers_in(struct heap * heap) {
 }
 
 void compact_in(struct heap * heap) {
-    for (void * block=heap->memory + hdr_sz
+    for (void * block=heap->start + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -267,28 +267,37 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     return header->data;
 }
 
-void make_heap(struct heap * heap, int size) {
+void make_heap(struct heap ** heap_ptr, int size) {
     int rounded_size = round_to(getpagesize(), size);
 
     void * memory = mmap(NULL, rounded_size, PROT_READ | PROT_WRITE,
                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if (! memory) die("can't create heap");
 
+    * heap_ptr = (struct heap *) memory;
+    struct heap * heap = * heap_ptr;
+
+
     heap->memory = memory;
     heap->end = memory + rounded_size;
-    heap->next = memory;
+    heap->next = heap->start;
 
     heap->roots[SYMBOLS] = get_header(allocate_symbol_intern_node());
 }
 
-struct heap heap0;
+void load_heap(struct heap ** heap_ptr) {
+    //open("system_image.bin", WHUT);
+    die("can't load heap");
+}
+
+struct heap * heap0;
 
 void collect() {
-    collect_in(& heap0);
+    collect_in(heap0);
 }
 
 void * allocate(int size, enum layout layout) {
-    return allocate_in(& heap0, size, layout);
+    return allocate_in(heap0, size, layout);
 }
 
 void * allocate_noptr(int size) {
@@ -297,10 +306,6 @@ void * allocate_noptr(int size) {
 
 void * allocate_allptr(int size) {
     return allocate(size, all_ptr_layout);
-}
-
-void init_heap() {
-    make_heap(& heap0, HEAP_SIZE);
 }
 
 // end memory management
@@ -343,10 +348,10 @@ char * cons_tag_str(enum cons_tag val) {
 
 //TODO iterate over headers instead of datas
 void print_heap_in(struct heap * heap) {
-    printf("memory=%x end=%x next=%x\n",
-           heap->memory, heap->end, heap->next);
+    printf("memory=%x end=%x next=%x start=%x\n",
+           heap->memory, heap->end, heap->next, heap->start);
     //TODO print roots
-    for (void * block=heap->memory + hdr_sz
+    for (void * block=heap->start + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -389,7 +394,7 @@ void print_heap_in(struct heap * heap) {
 }
 
 void print_heap() {
-    print_heap_in(& heap0);
+    print_heap_in(heap0);
 }
 
 // end heap display
@@ -746,7 +751,7 @@ void * get_symbol_ref_n_in(struct heap * heap, char * name, int length) {
 }
 
 void * get_symbol_ref_n(char * name, int length) {
-    return get_symbol_ref_n_in(& heap0, name, length);
+    return get_symbol_ref_n_in(heap0, name, length);
 }
 
 void * get_symbol_ref(char * name) {
@@ -1339,6 +1344,13 @@ struct item builtin_gensym(struct item args) {
     return (struct item) {sym_tag, str};
 }
 
+bool do_gc = false;
+struct item builtin_gc(struct item args) {
+    if (! is_nil(args)) throw_eval_error("bad gc arg");
+    do_gc = true;
+    return nil;
+}
+
 struct item lisp_apply(struct item to_invoke, struct item args) {
     struct cons * current = get_cell(to_invoke);
 
@@ -1351,6 +1363,7 @@ struct item lisp_apply(struct item to_invoke, struct item args) {
         if (builtin == get_symbol_ref("#<cons>")) return builtin_cons(args);
         if (builtin == get_symbol_ref("#<+>")) return builtin_add(args);
         if (builtin == get_symbol_ref("#<gensym>")) return builtin_gensym(args);
+        if (builtin == get_symbol_ref("#<gc>")) return builtin_gc(args);
         throw_eval_error("bad builtin");
     }
     struct cons * body = head_cons(current);
@@ -1495,14 +1508,16 @@ struct item builtin(char * str) {
 int main(int argc, char * argv[]) {
     using_history();
 
-    init_heap();
+    make_heap(& heap0, HEAP_SIZE);
 
     struct cons * initial_env
         = conscell(cons(nil, nil),
                    cons(cons(sym("cons"), builtin("#<cons>")),
                    cons(cons(sym("+"), builtin("#<+>")),
                    cons(cons(sym("gensym"), builtin("#<gensym>")),
-                        nil))));
+                   cons(cons(sym("gc"), builtin("#<gc>")),
+                        nil)))));
+    heap0->roots[LISP_ENV] = get_header(initial_env);
 
     char * line;
     while(line = readline("al> ")) {
@@ -1514,36 +1529,18 @@ int main(int argc, char * argv[]) {
                 printf("eval error\n");
             }
             else {
-                struct item result = lisp_eval(maybe_sexp.v, initial_env);
+                struct item result = lisp_eval(maybe_sexp.v, (struct cons *) heap0->roots[LISP_ENV]->data);
                 print_cons_item(result);
                 putchar('\n');
             }
         }
+
+        if (do_gc) {
+            collect();
+            do_gc = false;
+
+            if (heap0->roots[LISP_ENV]->data != (void *) initial_env) printf("env moved\n");
+        }
     }
     putchar('\n');
-
-    /*
-    create_test_sub();
-
-    monitor();
-    */
-
-    /*
-    struct do_next do_next;
-do_run:
-    do_next = run();
-
-    switch (do_next.action) {
-    case abort_code:
-        die("ABORT");
-    case halt_code:
-        puts("halted");
-        break;
-    case jump_c:
-        regs = handle_jump_c(do_next.regs);
-        goto do_run;
-    default:
-        die("unknown do_next.action");
-    }
-    */
 }
