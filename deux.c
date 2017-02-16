@@ -346,12 +346,28 @@ char * cons_tag_str(enum cons_tag val) {
     }
 }
 
-//TODO iterate over headers instead of datas
+void print_hexdump(void * addr, int length) {
+    for (int ix=0 ; ix < length ; ix+=16) {
+        printf("%08x: ", addr+ix);
+        for (int seg=0 ; seg < 4 ; seg+=1) {
+            for (int ix2=0 ; ix2 < 4 ; ix2+=1) {
+                printf("%02x ", ((uint8_t *) addr)[ix+seg*4+ix2]);
+            }
+            putchar(' ');
+        }
+        putchar('\n');
+    }
+}
+
 void print_heap_in(struct heap * heap) {
     printf("memory=%x end=%x next=%x start=%x\n",
            heap->memory, heap->end, heap->next, heap->start);
-    //TODO print roots
-    for (void * block=heap->start + hdr_sz
+
+    for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
+        printf("heap->roots[%d]=%x\n", ix, heap->roots[ix]);
+    }
+
+    for (void * block=((void *) heap->start) + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -391,6 +407,7 @@ void print_heap_in(struct heap * heap) {
             break;
         }
     }
+    printf("end\n");
 }
 
 void print_heap() {
@@ -809,10 +826,12 @@ void print_cons_item(struct item item) {
             fprintf(stdout, "%u", (unsigned int) item.ptr);
             break;
         case sym_tag:
-            fprintf(stdout, "%s", (char *) item.ptr);
+            if (item.ptr) fprintf(stdout, "%s", (char *) item.ptr);
+            else fprintf(stdout, "-0-");
             break;
         case cons_tag:
             if (cell && cell->head.tag == sym_tag
+                && cell->head.ptr
                 && ((char *) cell->head.ptr)[0] == '#') {
                 fprintf(stdout, cell->head.ptr);
                 break;
