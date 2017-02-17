@@ -7,9 +7,9 @@ SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
-all: deux
+all: al
 
-deux: deux.o mnemonics.o
+al: al.o deux.o mnemonics.o
 
 deux.c: mnemonics.h
 
@@ -21,7 +21,7 @@ mnemonics.h mnemonics.c: mnemonics.py
 .PHONY: debug debug_do clean
 
 clean:
-	rm -f $(OBJ) deux
+	rm -f $(OBJ) al
 
 
 debug:

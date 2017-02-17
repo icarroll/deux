@@ -1524,7 +1524,7 @@ struct item builtin(char * str) {
                 nil))));
 }
 
-int main(int argc, char * argv[]) {
+void al() {
     using_history();
 
     make_heap(& heap0, HEAP_SIZE);
