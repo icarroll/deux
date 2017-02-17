@@ -1,6 +1,8 @@
+#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <setjmp.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -16,9 +18,19 @@
 #include "deux.h"
 #include "mnemonics.h"
 
+void hurl() {
+    printf("not ok\n");
+    fflush(0);
+    raise(SIGSEGV);
+}
+
 // memory management
 
 struct registers regs;
+
+bool in_heap_in(struct heap * heap, void * addr) {
+    return ((void *) heap->start <= addr && addr < heap->end);
+}
 
 struct block_header * get_header(void * block_ptr) {
     return (struct block_header *) (block_ptr - hdr_sz);
@@ -121,12 +133,14 @@ void mark_in(struct heap * heap) {
 }
 
 void * following_block(void * block) {
-    return block + get_header(block)->size + hdr_sz;
+    void * next_block = block + get_header(block)->size + hdr_sz;
+    //if (! in_heap(next_block)) hurl();
+    return next_block;
 }
 
 void * compute_forward_addrs_in(struct heap * heap) {
     void * next_free_addr = heap->start;
-    for (void * block=heap->start + hdr_sz
+    for (void * block=((void *) heap->start) + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -141,7 +155,7 @@ void * compute_forward_addrs_in(struct heap * heap) {
 
 void update_pointers_in(struct heap * heap) {
     // scan over heap
-    for (void * block=heap->start + hdr_sz
+    for (void * block=((void *) heap->start) + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -182,7 +196,7 @@ void update_pointers_in(struct heap * heap) {
 }
 
 void compact_in(struct heap * heap) {
-    for (void * block=heap->start + hdr_sz
+    for (void * block=((void *) heap->start) + hdr_sz
          ; block < heap->next
          ; block = following_block(block)) {
         struct block_header * header = get_header(block);
@@ -196,10 +210,6 @@ void compact_in(struct heap * heap) {
         }
     }
 }
-
-//TODO
-// check heap for errors
-// test allocation and collection
 
 void collect_in(struct heap * heap) {
     mark_in(heap);
@@ -242,8 +252,8 @@ int round_to(int unit, int amount) {
 void * allocate_in(struct heap * heap, int size, enum layout layout) {
     if (size < 1) return NULL;
 
-    size = round_to(ALIGNMENT, size);
     int entire_size = round_to(ALIGNMENT, hdr_sz + size);
+    int data_size = entire_size - hdr_sz;
 
     void * new_next = heap->next + entire_size;
     if (new_next > heap->end) {
@@ -258,9 +268,8 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     header->link_ptr = NULL;
     header->marked = false;
     header->layout = layout;
-    header->size = size;
+    header->size = data_size;
 
-    int data_size = entire_size - hdr_sz;
     memset(header->data, 0, data_size);
 
     heap->next = new_next;
@@ -292,6 +301,10 @@ void load_heap(struct heap ** heap_ptr) {
 
 struct heap * heap0;
 
+bool in_heap(void * addr) {
+    return in_heap_in(heap0, addr);
+}
+
 void collect() {
     collect_in(heap0);
 }
@@ -306,6 +319,32 @@ void * allocate_noptr(int size) {
 
 void * allocate_allptr(int size) {
     return allocate(size, all_ptr_layout);
+}
+
+struct block_header * following_header(struct block_header * header) {
+    return header + hdr_sz + header->size;
+}
+
+bool heap_ok_in(struct heap * heap) {
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
+        if (header->size <= 0) {
+            return false;
+        }
+        if (! in_heap_in(heap, header)) {
+            return false;
+        }
+        if ((int) header & 0b11) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool heap_ok() {
+    return heap_ok_in(heap0);
 }
 
 // end memory management
@@ -354,6 +393,11 @@ void print_hexdump(void * addr, int length) {
                 printf("%02x ", ((uint8_t *) addr)[ix+seg*4+ix2]);
             }
             putchar(' ');
+        }
+
+        for (int jx=0 ; jx < 16 ; jx+=1) {
+            char c = ((char *) addr)[ix+jx];
+            putchar(isprint(c) ? c : '.');
         }
         putchar('\n');
     }
@@ -1117,7 +1161,7 @@ bool match_sym(struct item item, char * str) {
     return item.tag == sym_tag && item.ptr == get_symbol_ref(str);
 }
 
-struct item lisp_eval(struct item exp, struct cons * env) {
+struct item lisp_eval_rec(struct item exp, struct cons * env) {
     switch (exp.tag) {
     case char_tag:
     case int_tag:
@@ -1156,15 +1200,15 @@ do_if:
                     if (! clause) return nil;
                     // one clause -> eval and return
                     if (is_nil(clause->tail)) {
-                        return lisp_eval(clause->head, env);
+                        return lisp_eval_rec(clause->head, env);
                     }
                     // two or more clauses ->
                     // if first evals true then return eval of second
                     // otherwise skip to next clause(s)
-                    struct item condition = lisp_eval(clause->head, env);
+                    struct item condition = lisp_eval_rec(clause->head, env);
                     if (condition.ptr) {
                         struct item action = tail_cons(clause)->head;
-                        return lisp_eval(action, env);
+                        return lisp_eval_rec(action, env);
                     }
                     clause = tail_cons(tail_cons(clause));
                     goto do_if;
@@ -1201,7 +1245,7 @@ do_if:
                     struct cons * current = tail_cons(cell);
                     struct item var = current->head;
                     current = tail_cons(current);
-                    struct item val = lisp_eval(current->head, env);
+                    struct item val = lisp_eval_rec(current->head, env);
                     struct item snd = env->tail;
                     struct item ins = cons(cons(var, val), snd);
                     env->tail = ins;
@@ -1213,7 +1257,7 @@ do_if:
                     struct cons * current = tail_cons(cell);
                     struct item var = current->head;
                     current = tail_cons(current);
-                    struct item val = lisp_eval(current->head, env);
+                    struct item val = lisp_eval_rec(current->head, env);
                     assoc_set(env, var.ptr, val);
                     return val;
                 }
@@ -1221,7 +1265,7 @@ do_if:
 
             // not special form so evaluate and invoke
             {
-                struct item to_invoke = lisp_eval(cell->head, env);
+                struct item to_invoke = lisp_eval_rec(cell->head, env);
                 if (is_cons(to_invoke)) {
                    if (match_sym(get_cell(to_invoke)->head, "#<subprogram>")) {
                        struct cons * evaluated = conscell(nil, nil);
@@ -1231,55 +1275,30 @@ do_if:
                        while (is_cons(current_read->tail)
                               && current_read->tail.ptr) {
                            current_write->head
-                               = lisp_eval(current_read->head, env);
+                               = lisp_eval_rec(current_read->head, env);
                            current_write->tail = cons(nil, nil);
 
                            current_read = tail_cons(current_read);
                            current_write = tail_cons(current_write);
                        }
 
-                       current_write->head = lisp_eval(current_read->head, env);
+                       current_write->head = lisp_eval_rec(current_read->head, env);
                        if (current_read->tail.ptr) {
                            current_write->tail
-                               = lisp_eval(current_read->tail, env);
+                               = lisp_eval_rec(current_read->tail, env);
                        }
                        else current_write->tail = nil;
 
-                       return lisp_apply(to_invoke, evaluated->tail);
+                       return lisp_apply_rec(to_invoke, evaluated->tail);
                    }
 
                    if (match_sym(get_cell(to_invoke)->head, "#<rewrite>")) {
-                       return lisp_eval(lisp_apply(to_invoke, cell->tail), env);
+                       return lisp_eval_rec(lisp_apply_rec(to_invoke, cell->tail), env);
                    }
                 }
             }
 
             throw_eval_error("bad invoke");
-
-            /*
-            // not special form, so evaluate all and invoke
-            {
-                struct cons * evaluated = conscell(nil, nil);
-
-                struct cons * current_read = cell;
-                struct cons * current_write = evaluated;
-                while (is_cons(current_read->tail) && current_read->tail.ptr) {
-                    current_write->head = lisp_eval(current_read->head, env);
-                    current_write->tail = cons(nil, nil);
-
-                    current_read = tail_cons(current_read);
-                    current_write = tail_cons(current_write);
-                }
-
-                current_write->head = lisp_eval(current_read->head, env);
-                if (current_read->tail.ptr) {
-                    current_write->tail = lisp_eval(current_read->tail, env);
-                }
-                else current_write->tail = nil;
-
-                return lisp_apply(evaluated->head, evaluated->tail);
-            }
-            */
         }
     default:
         die("unknown tag in eval");
@@ -1370,7 +1389,7 @@ struct item builtin_gc(struct item args) {
     return nil;
 }
 
-struct item lisp_apply(struct item to_invoke, struct item args) {
+struct item lisp_apply_rec(struct item to_invoke, struct item args) {
     struct cons * current = get_cell(to_invoke);
 
     current = tail_cons(current);
@@ -1392,7 +1411,7 @@ struct item lisp_apply(struct item to_invoke, struct item args) {
     struct cons * new_env = extend_env(env, argspec, args);
     struct item result = nil;
     while (body) {
-        result = lisp_eval(body->head, new_env);
+        result = lisp_eval_rec(body->head, new_env);
         body = tail_cons(body);
     }
 
@@ -1518,7 +1537,7 @@ quit:
 
 struct item builtin(char * str) {
     return cons(sym("#<subprogram>"),
-           cons(sym(""),
+           cons(sym("unused"),
            cons(sym(str),
            cons(nil,
                 nil))));
@@ -1548,7 +1567,9 @@ void al() {
                 printf("eval error\n");
             }
             else {
-                struct item result = lisp_eval(maybe_sexp.v, (struct cons *) heap0->roots[LISP_ENV]->data);
+                struct item result = lisp_eval_rec(
+                        maybe_sexp.v,
+                        (struct cons *) heap0->roots[LISP_ENV]->data);
                 print_cons_item(result);
                 putchar('\n');
             }

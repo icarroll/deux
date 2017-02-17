@@ -43,6 +43,12 @@ char * bool_str(bool val);
 
 char * layout_str(enum layout val);
 
+bool in_heap(void * addr);
+
+bool heap_ok();
+
+void print_hexdump(void * addr, int length);
+
 void * allocate_cons();
 
 //TODO move registers into heap roots
@@ -92,8 +98,8 @@ void print_tail_cons(struct cons * cell);
 
 void die(char * message);
 
-struct item lisp_eval(struct item exp, struct cons * env);
+struct item lisp_eval_rec(struct item exp, struct cons * env);
 
-struct item lisp_apply(struct item sub, struct item args);
+struct item lisp_apply_rec(struct item sub, struct item args);
 
 #endif // DEUX_H
