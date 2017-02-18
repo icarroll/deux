@@ -1,5 +1,6 @@
 *.sw?
 al
+runtest
 *.o
 *.d
 thoughts
