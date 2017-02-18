@@ -18,7 +18,12 @@ mnemonics.h mnemonics.c: mnemonics.py
 
 -include $(DEP)
 
-.PHONY: debug debug_do clean
+runtest: runtest.o deux.o mnemonics.o mt19937ar.o
+
+test: runtest
+	./runtest
+
+.PHONY: test debug debug_do clean
 
 clean:
 	rm -f $(OBJ) al
