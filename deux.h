@@ -23,11 +23,21 @@ struct heap {
     void * start[];
 };
 
+void make_heap(struct heap ** heap_ptr, int size);
+
 enum layout {
     no_ptr_layout= 0,
     all_ptr_layout=-1,
     cons_layout=-2,
 };
+
+static const enum layout layouts[] = {
+    no_ptr_layout,
+    all_ptr_layout,
+    cons_layout,
+};
+
+static const int NUM_LAYOUTS = sizeof(layouts) / sizeof(layouts[0]);
 
 struct block_header {
     void * link_ptr;
@@ -45,9 +55,13 @@ char * layout_str(enum layout val);
 
 bool in_heap(void * addr);
 
+struct block_header * following_header(struct block_header * header);
+
 bool heap_ok();
 
 void print_hexdump(void * addr, int length);
+
+void collect();
 
 void * allocate_cons();
 
