@@ -1,5 +1,5 @@
 *.sw?
-al
+alua
 runtest
 *.o
 *.d

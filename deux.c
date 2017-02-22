@@ -29,7 +29,7 @@ void hurl() {
 struct registers regs;
 
 bool in_heap_in(struct heap * heap, void * addr) {
-    return ((void *) heap->start <= addr && addr < heap->end);
+    return ((void *) heap->start <= addr && addr < heap->next);
 }
 
 struct block_header * get_header(void * block_ptr) {
@@ -37,9 +37,16 @@ struct block_header * get_header(void * block_ptr) {
 }
 
 void print_block_header(struct block_header * header) {
-    printf("%x: link=%x marked=%s layout=%s size=%d\n",
-           header->data, header->link_ptr, bool_str(header->marked),
-           layout_str(header->layout), header->size);
+    uint32_t note = header->note;
+    char c[4];
+    for (int ix=3 ; ix >= 0 ; ix-=1) {
+        c[ix] = note & 0xff;
+        note >>= 8;
+    }
+    printf("%x: link=%x marked=%s layout=%s size=%d note=%c%c%c%c next@%x\n",
+           header, header->link_ptr, bool_str(header->marked),
+           layout_str(header->layout), header->size,
+           c[0],c[1],c[2],c[3], following_header(header));
 }
 
 void print_mark_list(struct block_header * header) {
@@ -83,13 +90,16 @@ void mark_in(struct heap * heap) {
             break;
         case all_ptr_layout:
             {
+                //SUSPECT
                 void ** end = cur_header->data
                               + cur_header->size / sizeof(* cur_header->data);
                 for (void ** candidate = cur_header->data
                      ; candidate < end
                      ; candidate += 1) {
                     // don't follow null or unaligned pointers
-                    if (* candidate && ! ((int) * candidate & 0b11)) {
+                    if (* candidate
+                        && ! ((int) * candidate & 0b11)
+                        && in_heap_in(heap, candidate)) {
                         struct block_header * header = get_header(* candidate);
                         if (! header->marked) {
                             header->link_ptr = NULL;
@@ -132,18 +142,11 @@ void mark_in(struct heap * heap) {
     }
 }
 
-void * following_block(void * block) {
-    void * next_block = block + get_header(block)->size + hdr_sz;
-    //if (! in_heap(next_block)) hurl();
-    return next_block;
-}
-
 void * compute_forward_addrs_in(struct heap * heap) {
     void * next_free_addr = heap->start;
-    for (void * block=((void *) heap->start) + hdr_sz
-         ; block < heap->next
-         ; block = following_block(block)) {
-        struct block_header * header = get_header(block);
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
         if (header->marked) {
             header->link_ptr = next_free_addr;
             next_free_addr += hdr_sz + header->size;
@@ -153,13 +156,14 @@ void * compute_forward_addrs_in(struct heap * heap) {
     return next_free_addr;
 }
 
+//TODO factor out should_forward() including in_heap()
 void update_pointers_in(struct heap * heap) {
     // scan over heap
-    for (void * block=((void *) heap->start) + hdr_sz
-         ; block < heap->next
-         ; block = following_block(block)) {
-        struct block_header * header = get_header(block);
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
         if (! header->marked) continue;   // skip unmarked blocks
+        void * block = header->data;
 
         switch (header->layout) {
         case no_ptr_layout:
@@ -196,10 +200,9 @@ void update_pointers_in(struct heap * heap) {
 }
 
 void compact_in(struct heap * heap) {
-    for (void * block=((void *) heap->start) + hdr_sz
-         ; block < heap->next
-         ; block = following_block(block)) {
-        struct block_header * header = get_header(block);
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
         if (header->marked) {
             struct block_header * dest_header;
             dest_header = (struct block_header *) (header->link_ptr);
@@ -249,7 +252,12 @@ int round_to(int unit, int amount) {
     return ((amount - 1) / unit + 1) * unit;
 }
 
+uint32_t make_note(char * c) {
+    return c[0]<<24 | c[1]<<16 | c[2]<<8 | c[3];
+}
+
 void * allocate_in(struct heap * heap, int size, enum layout layout) {
+    if (! heap_ok_in(heap)) hurl();
     if (size < 1) return NULL;
 
     int entire_size = round_to(ALIGNMENT, hdr_sz + size);
@@ -273,6 +281,10 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
     memset(header->data, 0, data_size);
 
     heap->next = new_next;
+
+    header->note = make_note("shrg");
+
+    if (! heap_ok_in(heap)) hurl();
     return header->data;
 }
 
@@ -295,6 +307,7 @@ void make_heap(struct heap ** heap_ptr, int size) {
 }
 
 void load_heap(struct heap ** heap_ptr) {
+    //TODO
     //open("system_image.bin", WHUT);
     die("can't load heap");
 }
@@ -322,7 +335,7 @@ void * allocate_allptr(int size) {
 }
 
 struct block_header * following_header(struct block_header * header) {
-    return header + hdr_sz + header->size;
+    return (void *) header + hdr_sz + header->size;
 }
 
 bool heap_ok_in(struct heap * heap) {
@@ -411,16 +424,17 @@ void print_heap_in(struct heap * heap) {
         printf("heap->roots[%d]=%x\n", ix, heap->roots[ix]);
     }
 
-    for (void * block=((void *) heap->start) + hdr_sz
-         ; block < heap->next
-         ; block = following_block(block)) {
-        struct block_header * header = get_header(block);
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
         print_block_header(header);
 
         if (header->size <= 0) {
             printf("size error\n");
             break;
         }
+
+        void * block = header->data;
 
         switch (header->layout) {
         case no_ptr_layout:
@@ -1102,7 +1116,7 @@ void die(char * message) {
     exit(1);
 }
 
-// lisp interpreter
+// rec lisp interpreter
 
 jmp_buf abort_eval;
 
@@ -1418,7 +1432,7 @@ struct item lisp_apply_rec(struct item to_invoke, struct item args) {
     return result;
 }
 
-// end lisp interpreter
+// end rec lisp interpreter
 
 // monitor
 
@@ -1543,44 +1557,15 @@ struct item builtin(char * str) {
                 nil))));
 }
 
-void al() {
+void alua() {
     using_history();
 
     make_heap(& heap0, HEAP_SIZE);
 
-    struct cons * initial_env
-        = conscell(cons(nil, nil),
-                   cons(cons(sym("cons"), builtin("#<cons>")),
-                   cons(cons(sym("+"), builtin("#<+>")),
-                   cons(cons(sym("gensym"), builtin("#<gensym>")),
-                   cons(cons(sym("gc"), builtin("#<gc>")),
-                        nil)))));
-    heap0->roots[LISP_ENV] = get_header(initial_env);
-
     char * line;
-    while(line = readline("al> ")) {
+    while(line = readline("alua> ")) {
         if (* line) add_history(line);
-        struct maybe_item maybe_sexp = parse(line);
         free(line);
-        if (maybe_sexp.present) {
-            if (setjmp(abort_eval)) {
-                printf("eval error\n");
-            }
-            else {
-                struct item result = lisp_eval_rec(
-                        maybe_sexp.v,
-                        (struct cons *) heap0->roots[LISP_ENV]->data);
-                print_cons_item(result);
-                putchar('\n');
-            }
-        }
-
-        if (do_gc) {
-            collect();
-            do_gc = false;
-
-            if (heap0->roots[LISP_ENV]->data != (void *) initial_env) printf("env moved\n");
-        }
     }
     putchar('\n');
 }

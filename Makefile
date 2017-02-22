@@ -7,9 +7,9 @@ SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
-all: al
+all: alua
 
-al: al.o deux.o mnemonics.o
+alua: alua.o deux.o mnemonics.o
 
 deux.c: mnemonics.h
 

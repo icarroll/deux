@@ -44,6 +44,7 @@ struct block_header {
     bool marked;
     enum layout layout;
     int size;
+    uint32_t note;
     void * data[];
 };
 
@@ -61,7 +62,13 @@ bool heap_ok();
 
 void print_hexdump(void * addr, int length);
 
+bool heap_ok_in(struct heap * heap);
+
+void print_heap_in(struct heap * heap);
+
 void collect();
+
+void * allocate_allptr(int size);
 
 void * allocate_cons();
 
