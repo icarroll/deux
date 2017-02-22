@@ -15,6 +15,10 @@
 #include <readline/history.h>
 #include <readline/readline.h>
 
+#include <lua5.2/lua.h>
+#include <lua5.2/lauxlib.h>
+#include <lua5.2/lualib.h>
+
 #include "deux.h"
 #include "mnemonics.h"
 
@@ -1549,12 +1553,18 @@ quit:
 
 // end monitor
 
-struct item builtin(char * str) {
-    return cons(sym("#<subprogram>"),
-           cons(sym("unused"),
-           cons(sym(str),
-           cons(nil,
-                nil))));
+int do_lol(lua_State * lua) {
+    int times = luaL_checkinteger(lua, 1);
+    for (int ix=0 ; ix < times ; ix+=1) {
+        printf("lol ");
+    }
+    putchar('\n');
+    return 1;
+}
+
+int do_whut(lua_State * lua) {
+    printf("whut\n");
+    return 1;
 }
 
 void alua() {
@@ -1562,9 +1572,22 @@ void alua() {
 
     make_heap(& heap0, HEAP_SIZE);
 
+    lua_State * lua = luaL_newstate();
+    luaL_openlibs(lua);
+
+    struct luaL_Reg lolwhut_lib[] = {
+        {"lol", do_lol},
+        {"whut", do_whut},
+        {NULL, NULL}
+    };
+    luaL_newlib(lua, lolwhut_lib);
+    lua_setglobal(lua, "lolwhut");
+
     char * line;
     while(line = readline("alua> ")) {
         if (* line) add_history(line);
+        int error = luaL_dostring(lua, line);
+        if (error) printf("error\n");
         free(line);
     }
     putchar('\n');
