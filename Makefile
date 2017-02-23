@@ -7,9 +7,9 @@ SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
-all: alua
+all: luamon
 
-alua: alua.o deux.o mnemonics.o
+luamon: luamon.o deux.o mnemonics.o
 
 deux.c: mnemonics.h
 
@@ -26,7 +26,7 @@ test: runtest
 .PHONY: test debug debug_do clean
 
 clean:
-	rm -f $(OBJ) $(DEP) alua runtest mnemonics.c mnemonics.h
+	rm -f $(OBJ) $(DEP) luamon runtest mnemonics.c mnemonics.h
 
 
 debug:

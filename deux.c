@@ -15,10 +15,6 @@
 #include <readline/history.h>
 #include <readline/readline.h>
 
-#include <lua.h>
-#include <lauxlib.h>
-#include <lualib.h>
-
 #include "deux.h"
 #include "mnemonics.h"
 
@@ -854,66 +850,3 @@ quit:
 }
 
 // end monitor
-
-int do_lol(lua_State * lua) {
-    int times = luaL_checkinteger(lua, 1);
-    for (int ix=0 ; ix < times ; ix+=1) {
-        printf("lol ");
-    }
-    putchar('\n');
-    return 1;
-}
-
-int do_whut(lua_State * lua) {
-    printf("whut\n");
-    return 1;
-}
-
-void alua() {
-    using_history();
-
-    make_heap(& heap0, HEAP_SIZE);
-
-    lua_State * lua = luaL_newstate();
-    luaL_openlibs(lua);
-
-    struct luaL_Reg lolwhut_lib[] = {
-        {"lol", do_lol},
-        {"whut", do_whut},
-        {NULL, NULL}
-    };
-    luaL_newlib(lua, lolwhut_lib);
-    lua_setglobal(lua, "lolwhut");
-
-    char * line;
-    while(true) {
-        line = readline("alua> ");
-        if (! line) break;
-        if (* line) add_history(line);
-
-        const char * retline = lua_pushfstring(lua, "return %s;", line);
-        int status = luaL_loadbuffer(lua, retline, strlen(retline), "=stdin");
-        lua_remove(lua, 1);
-        if (status != LUA_OK) {
-            lua_pop(lua, 1);
-            status = luaL_loadbuffer(lua, line, strlen(line), "stdin");
-        }
-        if (status != LUA_OK) {
-            printf("error: %s\n", luaL_checkstring(lua, 1));
-            lua_pop(lua, 1);
-        }
-        else {
-            status = lua_pcall(lua, 0, LUA_MULTRET, 0);
-            if (status == LUA_OK) {
-                int n = lua_gettop(lua);
-                if (n > 0) {
-                    lua_getglobal(lua, "print");
-                    lua_insert(lua, 1);
-                    lua_pcall(lua, n, 0, 0);
-                }
-            }
-        }
-        free(line);
-    }
-    putchar('\n');
-}
