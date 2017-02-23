@@ -60,6 +60,8 @@ void luamon() {
 
     char * line;
     while(true) {
+        lua_settop(lua, 0);
+
         line = readline("luamon> ");
         if (! line) break;
         if (* line) add_history(line);
