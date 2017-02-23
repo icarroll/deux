@@ -1,7 +1,7 @@
 CC = gcc
 OUTPUT_OPTION = -MMD -MP -o $@
 CFLAGS = -std=gnu11 -O
-LDLIBS = -lreadline -llua5.2
+LDLIBS = -lreadline -llua -lm -ldl
 
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
