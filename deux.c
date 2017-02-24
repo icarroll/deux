@@ -37,16 +37,54 @@ struct block_header * get_header(void * block_ptr) {
 }
 
 void print_block_header(struct block_header * header) {
-    uint32_t note = header->note;
-    char c[4];
-    for (int ix=3 ; ix >= 0 ; ix-=1) {
-        c[ix] = note & 0xff;
-        note >>= 8;
-    }
-    printf("%x: link=%x marked=%s layout=%s size=%d note=%c%c%c%c next@%x\n",
+    printf("0x%x: link=%x marked=%s layout=%s size=%dx%d=%d note=%.*s next@0x%x\n",
            header, header->link_ptr, bool_str(header->marked),
-           layout_str(header->layout), header->size,
-           c[0],c[1],c[2],c[3], following_header(header));
+           layout_str(header->layout), header->size/sizeof(void *),
+           sizeof(void *), header->size, 4, & header->note,
+           following_header(header));
+}
+
+void print_block(struct block_header * header) {
+    print_block_header(header);
+
+    switch (header->layout) {
+    case no_ptr_layout:
+        /*
+        for (void ** item = (void **) header->data
+             ; item < (void **) ((void *) header->data + header->size)
+             ; item += 1) {
+        }
+        */
+        print_hexdump(header->data, header->size);
+        break;
+    case all_ptr_layout:
+        for (int ix=0 ; ix < header->size/sizeof(void *) ; ix+=1) {
+            void * value = header->data[ix];
+            printf("% 4d: 0x%08x", ix, value);
+            switch ((uint32_t) value & 0b11) {
+            case 0b00:   // pointer
+                {
+                    if (in_heap(value)) {
+                        struct block_header * pheader = value;
+                        printf(" -> layout=%s size=%d note=%.*s",
+                               layout_str(pheader->layout), pheader->size,
+                               4, & pheader->note);
+                    }
+                }
+                break;
+            case 0b11:   // uint32_t
+                printf(" = %u", value);
+                break;
+            default:
+                die("unhandled value tag");
+            }
+
+            putchar('\n');
+        }
+        break;
+    default:
+        die("unhandled block layout");
+    }
 }
 
 void print_mark_list(struct block_header * header) {
@@ -133,7 +171,7 @@ void * compute_forward_addrs_in(struct heap * heap) {
     return next_free_addr;
 }
 
-//TODO factor out should_forward() including in_heap()
+//TODO factor out should_forward() and also check in_heap()
 void update_pointers_in(struct heap * heap) {
     // scan over heap
     for (struct block_header * header=(struct block_header *) heap->start
@@ -216,7 +254,8 @@ int round_to(int unit, int amount) {
 }
 
 uint32_t make_note(char * c) {
-    return c[0]<<24 | c[1]<<16 | c[2]<<8 | c[3];
+    if (strnlen(c, 4) != 4) die("block note too short");
+    return c[3]<<24 | c[2]<<16 | c[1]<<8 | c[0];
 }
 
 void * allocate_in(struct heap * heap, int size, enum layout layout) {
