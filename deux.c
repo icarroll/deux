@@ -94,6 +94,10 @@ void print_mark_list(struct block_header * header) {
     }
 }
 
+void (* pre_collect_hook)() = NULL;
+void (* add_roots_hook)(void **) = NULL;
+void (* update_roots_hook)() = NULL;
+
 void mark_in(struct heap * heap) {
     // mark roots and add to list
     struct block_header * next_header = heap->roots[0];
@@ -119,6 +123,8 @@ void mark_in(struct heap * heap) {
     }
 
     last_header->link_ptr = NULL;
+
+    if (add_roots_hook) add_roots_hook(& last_header->link_ptr);
 
     while (next_header) {
         struct block_header * cur_header = next_header;
@@ -216,10 +222,12 @@ void compact_in(struct heap * heap) {
 }
 
 void collect_in(struct heap * heap) {
+    if (pre_collect_hook) pre_collect_hook();
+
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
 
-    // record new root locations
+    // save new root locations
     for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
         if (heap->roots[ix]) heap->new_roots[ix] = heap->roots[ix]->link_ptr;
         else heap->new_roots[ix] = NULL;
@@ -247,6 +255,8 @@ void collect_in(struct heap * heap) {
 
     if (regs.code_block) regs.code_block = new_code_block->data;
     if (regs.data_block) regs.data_block = new_data_block->data;
+
+    if (update_roots_hook) update_roots_hook();
 }
 
 int round_to(int unit, int amount) {

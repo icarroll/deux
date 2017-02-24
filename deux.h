@@ -30,7 +30,7 @@ enum layout {
 };
 
 struct block_header {
-    void * link_ptr;
+    void * link_ptr; //TODO change type to struct block_header *
     bool marked;
     enum layout layout;
     int size;

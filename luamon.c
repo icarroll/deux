@@ -25,6 +25,71 @@
 // invoke activation record/code block
 
 extern struct heap * heap0;
+extern void (* pre_collect_hook)();
+extern void (* add_roots_hook)(void **);
+extern void (* update_roots_hook)();
+
+lua_State * lua_state_for_gc_hooks;
+
+void run_lua_gc() {
+    lua_gc(lua_state_for_gc_hooks, LUA_GCCOLLECT, 0);
+}
+
+void get_roots_from_lua(void ** mark_list_tail) {
+    lua_State * lua = lua_state_for_gc_hooks;
+
+    // get ledger from registry
+    lua_pushlightuserdata(lua, heap0);
+    lua_gettable(lua, LUA_REGISTRYINDEX);
+
+    // iterate over ledger
+    lua_pushnil(lua);
+    while (lua_next(lua, -2)) {
+        struct block_header * header = lua_touserdata(lua, -1);
+        // add blocks to mark list if not already present
+        if (header->link_ptr == NULL) {
+            * mark_list_tail = header;
+            mark_list_tail = & header->link_ptr;
+        }
+
+        lua_pop(lua, 1);
+    }
+
+    lua_pop(lua, 1);
+}
+
+void update_roots_in_lua() {
+    lua_State * lua = lua_state_for_gc_hooks;
+
+    // get ledger from registry
+    lua_pushlightuserdata(lua, heap0);
+    lua_gettable(lua, LUA_REGISTRYINDEX);
+
+    // iterate over ledger
+    lua_pushnil(lua);
+    while (lua_next(lua, -2)) {
+        // copy the ledger key (need to use twice)
+        lua_pushvalue(lua, -2);
+        lua_insert(lua, -2);
+
+        // update address in ledger
+        struct block_header * header = lua_touserdata(lua, -1);
+        lua_pop(lua, 1);
+        lua_pushlightuserdata(lua, header->link_ptr);
+        lua_settable(lua, -4);
+
+        lua_pop(lua, 1);
+    }
+
+    lua_pop(lua, 1);
+}
+
+void setup_gc_hooks(lua_State * lua) {
+    lua_state_for_gc_hooks = lua;
+    pre_collect_hook = run_lua_gc;
+    add_roots_hook = get_roots_from_lua;
+    update_roots_hook = update_roots_in_lua;
+}
 
 int block_tostring(lua_State * lua) {
     void * obj = luaL_checkudata(lua, 1, "block");
@@ -36,8 +101,7 @@ int block_tostring(lua_State * lua) {
     lua_pushvalue(lua, 1);   // ledger key is block argument
     lua_gettable(lua, -2);   // look up block address in ledger
 
-    int addr = luaL_checkinteger(lua, -1);
-    struct block_header * header = (struct block_header *) addr;
+    struct block_header * header = lua_touserdata(lua, -1);
 
     char * note = (char *) (& header->note);
     lua_pushfstring(lua, "%p: layout=%s size=%dx%d=%d note=%c%c%c%c",
@@ -74,22 +138,22 @@ int do_print_block_at(lua_State * lua) {
     return 0;
 }
 
-int get_addr_from_ledger(lua_State * lua, int n) {
+void * get_addr_from_ledger(lua_State * lua, int n) {
     // get ledger from registry
     lua_pushlightuserdata(lua, heap0);
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
-    lua_pushvalue(lua, n);   // ledger key is block argument
+    lua_pushvalue(lua, n);   // ledger key is block object
     lua_gettable(lua, -2);   // look up block address in ledger
 
-    return luaL_checkinteger(lua, -1);
+    return lua_touserdata(lua, -1);
 }
 
 int do_print_block(lua_State * lua) {
     luaL_checkudata(lua, 1, "block");
-    int addr = get_addr_from_ledger(lua, 1);
+    struct block_header * header = get_addr_from_ledger(lua, 1);
     //TODO catch segfault and throw lua error
-    print_block((struct block_header *) addr);
+    print_block(header);
     return 0;
 }
 
@@ -119,7 +183,7 @@ void new_block(lua_State * lua, struct block_header * header) {
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
     lua_pushvalue(lua, -2);   // ledger key is new block object
-    lua_pushinteger(lua, (int) header);  // ledger value is heap address
+    lua_pushlightuserdata(lua, header);  // ledger value is heap address
     lua_settable(lua, -3);   // enter new block in registry
 
     lua_pop(lua, 1);   // remove ledger, leave new block object on stack
@@ -166,13 +230,14 @@ void setup_ledger(lua_State * lua) {
 void luamon() {
     using_history();
 
-    make_heap(& heap0, HEAP_SIZE);
-
     lua_State * lua = luaL_newstate();
     luaL_openlibs(lua);
 
     setup_block_metatable(lua);
     setup_globals(lua);
+
+    make_heap(& heap0, HEAP_SIZE);
+    setup_gc_hooks(lua);
     setup_ledger(lua);
 
     char * line;
