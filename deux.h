@@ -58,6 +58,9 @@ bool heap_ok_in(struct heap * heap);
 
 void print_heap_in(struct heap * heap);
 
+void * tagint(uint32_t val);
+uint32_t untag(void * val);
+
 void collect();
 
 void * allocate_allptr(int size);
