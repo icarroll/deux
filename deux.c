@@ -73,7 +73,7 @@ void print_block(struct block_header * header) {
                 }
                 break;
             case 0b11:   // uint32_t
-                printf(" = %u", value);
+                printf(" = int:%u", untag(value));
                 break;
             default:
                 die("unhandled value tag");
