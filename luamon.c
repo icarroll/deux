@@ -29,6 +29,10 @@ extern void (* pre_collect_hook)();
 extern void (* add_roots_hook)(void **);
 extern void (* update_roots_hook)();
 
+int do_print_block(lua_State * lua);
+void new_block(lua_State * lua, struct block_header * header);
+void * get_addr_from_ledger(lua_State * lua, int n);
+
 lua_State * lua_state_for_gc_hooks;
 
 void run_lua_gc() {
@@ -111,10 +115,124 @@ int block_tostring(lua_State * lua) {
     return 1;
 }
 
+int block_index(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+
+    if (lua_type(lua, 2) == LUA_TSTRING) {
+        lua_pushliteral(lua, "print");
+        if (!lua_rawequal(lua, -1, -2)) luaL_argerror(lua, 2, "no such method");
+
+        lua_pop(lua, 2);
+        lua_pushcfunction(lua, do_print_block);
+        return 1;
+    }
+
+    int ix = luaL_checkinteger(lua, 2);
+
+    struct block_header * header = get_addr_from_ledger(lua, 1);
+    if (0 <= ix && ix < header->size / sizeof(void *)) {
+        void * value = header->data[ix];
+
+        switch (header->layout) {
+        case no_ptr_layout:
+            lua_pushinteger(lua, (int) value);
+            break;
+
+        case all_ptr_layout:
+            switch ((uint32_t) value & 0b11) {
+            case 0b00:   // pointer
+                if (in_heap(value)) new_block(lua, value);
+                else lua_pushlightuserdata(lua, value);
+                break;
+            case 0b11:   // uint32_t
+                lua_pushinteger(lua, untag(value));
+                break;
+            default:
+                die("unhandled value tag");
+            }
+            break;
+
+        default:
+            die("unhandled block layout");
+        }
+    }
+    else luaL_argerror(lua, 2, "out of bounds");
+
+    return 1;
+}
+
+int block_newindex(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+    int ix = luaL_checkinteger(lua, 2);
+
+    struct block_header * header = get_addr_from_ledger(lua, 1);
+    if (0 <= ix && ix < header->size / sizeof(void *)) {
+        switch (header->layout) {
+        case no_ptr_layout:
+            switch (lua_type(lua, 3)) {
+            case LUA_TNUMBER:
+                header->data[ix] = (void *) ((int) lua_tointeger(lua, 3));
+                break;
+            case LUA_TLIGHTUSERDATA:
+                header->data[ix] = lua_touserdata(lua, 3);
+                break;
+            case LUA_TUSERDATA:
+                header->data[ix] = get_addr_from_ledger(lua, 3);
+                break;
+            default:
+                luaL_argerror(lua, 3, "bad argument");
+            }
+            break;
+
+        case all_ptr_layout:
+            switch (lua_type(lua, 3)) {
+            case LUA_TNUMBER:
+                header->data[ix] = tagint(lua_tointeger(lua, 3));
+                break;
+            case LUA_TLIGHTUSERDATA:
+                header->data[ix] = lua_touserdata(lua, 3);
+                break;
+            case LUA_TUSERDATA:
+                header->data[ix] = get_addr_from_ledger(lua, 3);
+                break;
+            default:
+                luaL_argerror(lua, 3, "bad argument");
+            }
+            break;
+
+        default:
+            die("unhandled block layout");
+        }
+    }
+    else luaL_argerror(lua, 2, "out of bounds");
+
+    return 0;
+}
+
+int block_same(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+    luaL_checkudata(lua, 2, "block");
+
+    bool result = get_addr_from_ledger(lua, 1) == get_addr_from_ledger(lua, 2);
+    lua_pushboolean(lua, result);
+    return 1;
+}
+
 void setup_block_metatable(lua_State * lua) {
     luaL_newmetatable(lua, "block");
+
     lua_pushcfunction(lua, block_tostring);
     lua_setfield(lua, -2, "__tostring");
+
+    lua_pushcfunction(lua, block_index);
+    lua_setfield(lua, -2, "__index");
+
+    lua_pushcfunction(lua, block_newindex);
+    lua_setfield(lua, -2, "__newindex");
+
+    lua_pushcfunction(lua, block_same);
+    lua_setfield(lua, -2, "__eq");
+
     lua_pop(lua, 1);
 }
 
@@ -126,7 +244,7 @@ int do_hexdump(lua_State * lua) {
     return 0;
 }
 
-int do_get_heap(lua_State * lua) {
+int do_get_heap_addr(lua_State * lua) {
     lua_pushinteger(lua, (int) heap0);
     return 1;
 }
@@ -157,14 +275,6 @@ int do_print_block(lua_State * lua) {
     return 0;
 }
 
-struct luaL_Reg monitor_lib[] = {
-    {"hexdump", do_hexdump},
-    {"get_heap", do_get_heap},
-    {"print_block_at", do_print_block_at},
-    {"print_block", do_print_block},
-    {NULL, NULL}
-};
-
 int do_hex(lua_State * lua) {
     int n = luaL_checkinteger(lua, 1);
     char s[19];
@@ -194,6 +304,15 @@ int get_root_block(lua_State * lua) {
     return 1;
 }
 
+struct luaL_Reg monitor_lib[] = {
+    {"hexdump", do_hexdump},
+    {"get_heap_addr", do_get_heap_addr},
+    {"print_block_at", do_print_block_at},
+    {"print_block", do_print_block},
+    {"get_root", get_root_block},
+    {NULL, NULL}
+};
+
 void setup_globals(lua_State * lua) {
     luaL_newlib(lua, monitor_lib);
     lua_setglobal(lua, "mon");
@@ -204,7 +323,7 @@ void setup_globals(lua_State * lua) {
     lua_pushcfunction(lua, do_hex);
     lua_setglobal(lua, "hex");
 
-    lua_pushcfunction(lua, get_root_block);
+    get_root_block(lua);
     lua_setglobal(lua, "root");
 }
 
@@ -233,12 +352,12 @@ void luamon() {
     lua_State * lua = luaL_newstate();
     luaL_openlibs(lua);
 
-    setup_block_metatable(lua);
-    setup_globals(lua);
-
     make_heap(& heap0, HEAP_SIZE);
     setup_gc_hooks(lua);
     setup_ledger(lua);
+
+    setup_block_metatable(lua);
+    setup_globals(lua);
 
     char * line;
     while(true) {
