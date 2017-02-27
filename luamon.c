@@ -323,6 +323,33 @@ int do_alloc_ptr(lua_State * lua) {
     return 1;
 }
 
+int do_disassemble(lua_State * lua) {
+    struct block_header * header;
+    void ** code_block;
+
+    switch (lua_type(lua, 1)) {
+    case LUA_TNUMBER:
+        code_block = (void *) ((int) lua_tointeger(lua, 1));
+        header = get_header(code_block);
+        break;
+    case LUA_TLIGHTUSERDATA:
+        code_block = lua_touserdata(lua, 1);
+        header = get_header(code_block);
+        break;
+    case LUA_TUSERDATA:
+        header = get_addr_from_ledger(lua, 1);
+        code_block = header->data;
+        break;
+    default:
+        luaL_argerror(lua, 1, "bad argument");
+    }
+
+    if (header->layout != no_ptr_layout) luaL_argerror(lua, 1, "block type");
+
+    print_disassembly(code_block, header->size);
+    return 0;
+}
+
 int do_collect(lua_State * lua) {
     collect();
     return 0;
@@ -356,6 +383,9 @@ void setup_globals(lua_State * lua) {
 
     lua_pushcfunction(lua, do_alloc_ptr);
     lua_setglobal(lua, "ptr");
+
+    lua_pushcfunction(lua, do_disassemble);
+    lua_setglobal(lua, "disasm");
 }
 
 void setup_ledger(lua_State * lua) {

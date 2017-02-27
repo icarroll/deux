@@ -77,4 +77,6 @@ struct registers {
 
 void die(char * message);
 
+void print_disassembly(void ** code, int size);
+
 #endif // DEUX_H
