@@ -3,7 +3,7 @@
 
 enum {
     HEAP_SIZE=16*1024*1024,             // 16 MB
-    ROOT_BLOCK_SIZE=16*sizeof(void *),  // 16 items
+    ROOT_BLOCK_SIZE=4*sizeof(void *),  // 4 items
 };
 
 static const int ALIGNMENT = 8;
@@ -46,6 +46,8 @@ char * layout_str(enum layout val);
 
 bool in_heap(void * addr);
 
+struct block_header * get_header(void * block_ptr);
+
 struct block_header * following_header(struct block_header * header);
 
 bool heap_ok();
@@ -63,6 +65,7 @@ uint32_t untag(void * val);
 
 void collect();
 
+void * allocate_noptr(int size);
 void * allocate_allptr(int size);
 
 //TODO move registers into heap roots

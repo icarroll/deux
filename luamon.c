@@ -26,12 +26,12 @@
 
 extern struct heap * heap0;
 extern void (* pre_collect_hook)();
-extern void (* add_roots_hook)(void **);
+extern void (* add_roots_hook)(struct block_header **);
 extern void (* update_roots_hook)();
 
 int do_print_block(lua_State * lua);
 void new_block(lua_State * lua, struct block_header * header);
-void * get_addr_from_ledger(lua_State * lua, int n);
+struct block_header * get_addr_from_ledger(lua_State * lua, int n);
 
 lua_State * lua_state_for_gc_hooks;
 
@@ -39,7 +39,7 @@ void run_lua_gc() {
     lua_gc(lua_state_for_gc_hooks, LUA_GCCOLLECT, 0);
 }
 
-void get_roots_from_lua(void ** mark_list_tail) {
+void get_roots_from_lua(struct block_header ** mark_list_head) {
     lua_State * lua = lua_state_for_gc_hooks;
 
     // get ledger from registry
@@ -50,11 +50,14 @@ void get_roots_from_lua(void ** mark_list_tail) {
     lua_pushnil(lua);
     while (lua_next(lua, -2)) {
         struct block_header * header = lua_touserdata(lua, -1);
-        // add blocks to mark list if not already present
-        if (header->link_ptr == NULL) {
-            * mark_list_tail = header;
-            mark_list_tail = & header->link_ptr;
+        // mark blocks and add to mark list if not already present
+        if (! header->marked) {
+            header->link_ptr = * mark_list_head;
+            header->marked = true;
+            //printf("hook mark %x\n", header); //XXX
+            * mark_list_head = header;
         }
+        //else printf("hook skip (mark) %x\n", header); //XXX
 
         lua_pop(lua, 1);
     }
@@ -81,8 +84,6 @@ void update_roots_in_lua() {
         lua_pop(lua, 1);
         lua_pushlightuserdata(lua, header->link_ptr);
         lua_settable(lua, -4);
-
-        lua_pop(lua, 1);
     }
 
     lua_pop(lua, 1);
@@ -103,7 +104,7 @@ int block_tostring(lua_State * lua) {
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
     lua_pushvalue(lua, 1);   // ledger key is block argument
-    lua_gettable(lua, -2);   // look up block address in ledger
+    lua_gettable(lua, -2);   // look up block header address in ledger
 
     struct block_header * header = lua_touserdata(lua, -1);
 
@@ -141,7 +142,7 @@ int block_index(lua_State * lua) {
         case all_ptr_layout:
             switch ((uint32_t) value & 0b11) {
             case 0b00:   // pointer
-                if (in_heap(value)) new_block(lua, value);
+                if (in_heap(value)) new_block(lua, get_header(value));
                 else lua_pushlightuserdata(lua, value);
                 break;
             case 0b11:   // uint32_t
@@ -177,7 +178,7 @@ int block_newindex(lua_State * lua) {
                 header->data[ix] = lua_touserdata(lua, 3);
                 break;
             case LUA_TUSERDATA:
-                header->data[ix] = get_addr_from_ledger(lua, 3);
+                header->data[ix] = get_addr_from_ledger(lua, 3)->data;
                 break;
             default:
                 luaL_argerror(lua, 3, "bad argument");
@@ -193,7 +194,7 @@ int block_newindex(lua_State * lua) {
                 header->data[ix] = lua_touserdata(lua, 3);
                 break;
             case LUA_TUSERDATA:
-                header->data[ix] = get_addr_from_ledger(lua, 3);
+                header->data[ix] = get_addr_from_ledger(lua, 3)->data;
                 break;
             default:
                 luaL_argerror(lua, 3, "bad argument");
@@ -230,8 +231,10 @@ void setup_block_metatable(lua_State * lua) {
     lua_pushcfunction(lua, block_newindex);
     lua_setfield(lua, -2, "__newindex");
 
+    /*
     lua_pushcfunction(lua, block_same);
     lua_setfield(lua, -2, "__eq");
+    */
 
     lua_pop(lua, 1);
 }
@@ -256,13 +259,13 @@ int do_print_block_at(lua_State * lua) {
     return 0;
 }
 
-void * get_addr_from_ledger(lua_State * lua, int n) {
+struct block_header * get_addr_from_ledger(lua_State * lua, int n) {
     // get ledger from registry
     lua_pushlightuserdata(lua, heap0);
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
     lua_pushvalue(lua, n);   // ledger key is block object
-    lua_gettable(lua, -2);   // look up block address in ledger
+    lua_gettable(lua, -2);   // look up block header address in ledger
 
     return lua_touserdata(lua, -1);
 }
@@ -293,8 +296,8 @@ void new_block(lua_State * lua, struct block_header * header) {
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
     lua_pushvalue(lua, -2);   // ledger key is new block object
-    lua_pushlightuserdata(lua, header);  // ledger value is heap address
-    lua_settable(lua, -3);   // enter new block in registry
+    lua_pushlightuserdata(lua, header);  // ledger value is block header address
+    lua_settable(lua, -3);   // enter new block in ledger
 
     lua_pop(lua, 1);   // remove ledger, leave new block object on stack
 }
@@ -304,12 +307,34 @@ int get_root_block(lua_State * lua) {
     return 1;
 }
 
+int do_alloc_data(lua_State * lua) {
+    int size = luaL_checkinteger(lua, 1);
+    void * block = allocate_noptr(size);
+    if (! block) luaL_argerror(lua, 1, "can't allocate");
+    new_block(lua, get_header(block));
+    return 1;
+}
+
+int do_alloc_ptr(lua_State * lua) {
+    int size = luaL_checkinteger(lua, 1);
+    void * block = allocate_allptr(size);
+    if (! block) luaL_argerror(lua, 1, "can't allocate");
+    new_block(lua, get_header(block));
+    return 1;
+}
+
+int do_collect(lua_State * lua) {
+    collect();
+    return 0;
+}
+
 struct luaL_Reg monitor_lib[] = {
     {"hexdump", do_hexdump},
     {"get_heap_addr", do_get_heap_addr},
     {"print_block_at", do_print_block_at},
     {"print_block", do_print_block},
     {"get_root", get_root_block},
+    {"collect", do_collect},
     {NULL, NULL}
 };
 
@@ -325,6 +350,12 @@ void setup_globals(lua_State * lua) {
 
     get_root_block(lua);
     lua_setglobal(lua, "root");
+
+    lua_pushcfunction(lua, do_alloc_data);
+    lua_setglobal(lua, "data");
+
+    lua_pushcfunction(lua, do_alloc_ptr);
+    lua_setglobal(lua, "ptr");
 }
 
 void setup_ledger(lua_State * lua) {

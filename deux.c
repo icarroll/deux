@@ -65,7 +65,7 @@ void print_block(struct block_header * header) {
             case 0b00:   // pointer
                 {
                     if (in_heap(value)) {
-                        struct block_header * pheader = value;
+                        struct block_header * pheader = get_header(value);
                         printf(" -> layout=%s size=%d note=%.*s",
                                layout_str(pheader->layout), pheader->size,
                                4, & pheader->note);
@@ -95,63 +95,71 @@ void print_mark_list(struct block_header * header) {
 }
 
 void (* pre_collect_hook)() = NULL;
-void (* add_roots_hook)(void **) = NULL;
+void (* add_roots_hook)(struct block_header **) = NULL;
 void (* update_roots_hook)() = NULL;
 
 void mark_in(struct heap * heap) {
     // mark roots and add to list
     struct block_header * next_header = heap->roots[0];
     heap->roots[0]->marked = true;
+    //printf("root mark %x\n", heap->roots[0]); //XXX
     struct block_header * last_header = next_header;
 
     for (int ix=1 ; ix < NUM_ROOTS ; ix+=1) {
         last_header->link_ptr = heap->roots[ix];
         last_header->marked = true;
+        //printf("root mark %x\n", last_header); //XXX
         last_header = last_header->link_ptr;
     }
 
     if (regs.code_block) {
         last_header->link_ptr = regs.code_block;
         last_header->marked = true;
+        //printf("root mark %x\n", last_header); //XXX
         last_header = last_header->link_ptr;
     }
 
     if (regs.data_block) {
         last_header->link_ptr = regs.data_block;
         last_header->marked = true;
+        //printf("root mark %x\n", last_header); //XXX
         last_header = last_header->link_ptr;
     }
 
     last_header->link_ptr = NULL;
 
-    if (add_roots_hook) add_roots_hook(& last_header->link_ptr);
+    if (add_roots_hook) add_roots_hook(& next_header);
 
     while (next_header) {
         struct block_header * cur_header = next_header;
 
         switch (cur_header->layout) {
         case no_ptr_layout:
+            //printf("skip trace in %x (no_ptr)\n", cur_header); //XXX
             break;
         case all_ptr_layout:
             {
-                //SUSPECT
+                //printf("trace in %x\n", cur_header); //XXX
                 void ** end = cur_header->data
-                              + cur_header->size / sizeof(* cur_header->data);
+                              + cur_header->size / sizeof(void *);
                 for (void ** candidate = cur_header->data
                      ; candidate < end
                      ; candidate += 1) {
-                    // don't follow null or unaligned pointers
-                    if (* candidate
-                        && ! ((int) * candidate & 0b11)
-                        && in_heap_in(heap, candidate)) {
-                        struct block_header * header = get_header(* candidate);
+                    //printf("    @%x :", candidate); //XXX
+                    // don't follow null or unaligned or out of heap pointers
+                    if (* candidate && ! ((int) * candidate & 0b11) && in_heap_in(heap, candidate)) {
+                        void * block = * candidate;
+                        struct block_header * header = get_header(block);
                         if (! header->marked) {
                             header->link_ptr = NULL;
                             header->marked = true;
+                            //printf(" mark %x\n", header); //XXX
                             last_header->link_ptr = header;
                             last_header = header;
                         }
+                        //else printf(" skip (marked) %x\n", header); //XXX
                     }
+                    //else printf(" skip (candidate) %x\n", *candidate); //XXX
                 }
             }
             break;
@@ -170,8 +178,10 @@ void * compute_forward_addrs_in(struct heap * heap) {
          ; header = following_header(header)) {
         if (header->marked) {
             header->link_ptr = next_free_addr;
+            //printf("forward %x -> %x\n", header, next_free_addr); //XXX
             next_free_addr += hdr_sz + header->size;
         }
+        //else printf("skip (forward) %x\n", header); //XXX
     }
 
     return next_free_addr;
@@ -183,6 +193,7 @@ void update_pointers_in(struct heap * heap) {
     for (struct block_header * header=(struct block_header *) heap->start
          ; header < (struct block_header *) heap->next
          ; header = following_header(header)) {
+        //if (! header->marked) printf("skip (update) %x\n", header); //XXX
         if (! header->marked) continue;   // skip unmarked blocks
         void * block = header->data;
 
@@ -191,13 +202,18 @@ void update_pointers_in(struct heap * heap) {
             break;
         case all_ptr_layout:
             // scan over pointers in block
+            //printf("update in %x\n", header); //XXX
             for (void ** candidate = (void **) block
                  ; candidate < (void **) (block + header->size)
                  ; candidate += 1) {
                 // forward any non-zero aligned pointers
+                //printf("    @%x :", candidate); //XXX
                 if (* candidate && ! ((int) * candidate & 0b11)) {
+                    //printf(" %x ->", *candidate); //XXX
                     * candidate = get_header(* candidate)->link_ptr + hdr_sz;
+                    //printf(" %x\n", *candidate); //XXX
                 }
+                //else printf(" skip (candidate) %x\n", *candidate); //XXX
             }
             break;
         default:
@@ -215,9 +231,12 @@ void compact_in(struct heap * heap) {
             dest_header = (struct block_header *) (header->link_ptr);
             memmove(dest_header, header, hdr_sz + header->size);
 
+            //printf("compact %x -> %x\n", header, dest_header); //XXX
+
             dest_header->link_ptr = NULL;
             dest_header->marked = false;
         }
+        //else printf("skip (compact) %x\n", header); //XXX
     }
 }
 
@@ -226,6 +245,8 @@ void collect_in(struct heap * heap) {
 
     mark_in(heap);
     void * new_next = compute_forward_addrs_in(heap);
+
+    if (update_roots_hook) update_roots_hook();
 
     // save new root locations
     for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
@@ -255,8 +276,6 @@ void collect_in(struct heap * heap) {
 
     if (regs.code_block) regs.code_block = new_code_block->data;
     if (regs.data_block) regs.data_block = new_data_block->data;
-
-    if (update_roots_hook) update_roots_hook();
 }
 
 int round_to(int unit, int amount) {
