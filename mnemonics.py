@@ -97,6 +97,27 @@ return -1;
 """]
 )
 
+def lua_items(stuff):
+    for ix, (name, (argtype,)) in enumerate(stuff):
+        lua_args = {0:"", 1:"a", 11:"a,b", 12:"a,b", 111:"a,b,c"}[argtype]
+        calculation = {
+                0:"",
+                1:"|a<<16",
+                11:"|a<<16|b<<8",
+                12:"|a<<16|b",
+                111:"|a<<16|b<<8|c",
+                }[argtype]
+
+        yield name, lua_args, ix, calculation
+
+lua_functions = str.join("", [
+"""
+function {0} ({1})
+  local opcode = {2}
+  return opcode << 24 {3}
+end
+""".format(*items) for items in lua_items(mnemonics)])
+
 if __name__ == "__main__":
     with open("mnemonics.h", "w") as f:
         f.write(h_start)
@@ -108,3 +129,6 @@ if __name__ == "__main__":
         f.write(from_enum_to_string_code)
         f.write(patterns_code)
         f.write(from_string_to_enum_code)
+
+    with open("mnemonics.lua", "w") as f:
+        f.write(lua_functions)

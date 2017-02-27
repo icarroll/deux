@@ -9,11 +9,11 @@ DEP = $(SRC:.c=.d)
 
 all: luamon
 
-luamon: luamon.o deux.o mnemonics.o
+luamon: luamon.o deux.o mnemonics.o | mnemonics.lua
 
 deux.c: mnemonics.h
 
-mnemonics.h mnemonics.c: mnemonics.py
+mnemonics.h mnemonics.c mnemonics.lua: mnemonics.py
 	python mnemonics.py
 
 -include $(DEP)

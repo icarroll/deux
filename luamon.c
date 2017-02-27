@@ -11,15 +11,7 @@
 #include "deux.h"
 
 //TODO
-// display block
-//   show values for non-pointers
-//   show brief target info for pointers
-// allocate new block
-// set value in block
 // emit code into block
-//   implement all assembler instructions
-// initiate gc
-//   how to make lua values be roots?
 // save image
 // load image
 // invoke activation record/code block
@@ -386,6 +378,8 @@ void setup_globals(lua_State * lua) {
 
     lua_pushcfunction(lua, do_disassemble);
     lua_setglobal(lua, "disasm");
+
+    luaL_dostring(lua, "dofile('mnemonics.lua')");
 }
 
 void setup_ledger(lua_State * lua) {
@@ -436,7 +430,7 @@ void luamon() {
             status = luaL_loadbuffer(lua, line, strlen(line), "stdin");
         }
         if (status != LUA_OK) {
-            printf("error: %s\n", luaL_checkstring(lua, 1));
+            printf("error: %s\n", luaL_checkstring(lua, -1));
             lua_pop(lua, 1);
         }
         else {
@@ -450,7 +444,7 @@ void luamon() {
                 }
             }
             else {
-                printf("error: %s\n", luaL_checkstring(lua, 1));
+                printf("error: %s\n", luaL_checkstring(lua, -1));
                 lua_pop(lua, 1);
             }
         }

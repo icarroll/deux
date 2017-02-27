@@ -5,3 +5,4 @@ runtest
 *.d
 thoughts
 mnemonics.[ch]
+mnemonics.lua
