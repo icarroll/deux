@@ -567,6 +567,20 @@ struct do_next run() {
             ((void **) regs.data_block[arg8_1])[arg8_2]
                 = regs.data_block[arg8_3];
             break;
+        //TODO check for out-of-block jumps
+        case JUMP_imm24:
+            regs.icount = arg24;
+            break;
+        case JUMP_IF_imm16:
+            if (untag(regs.data_block[arg8_1])) {
+                regs.icount = arg16;
+            }
+            break;
+        case JUMP_IF_raw_imm16:
+            if ((uint32_t) regs.data_block[arg8_1]) {
+                regs.icount = arg16;
+            }
+            break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
             regs.code_block = regs.data_block[arg8_1];
@@ -831,6 +845,9 @@ void print_disassembly(void ** code, int size) {
         printf("%x : 0x%08x - %s ", code+ix, instruction, opcode_to_mnemonic(op));
         switch (arg_pattern(op)) {
         case 0:
+            break;
+        case 3:
+            printf("0x%06x", arg24);
             break;
         case 1:
             printf("0x%02x", arg8_1);

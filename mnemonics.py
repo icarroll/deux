@@ -9,6 +9,9 @@ mnemonics = [("ABORT",(0,)),
              ("GET_DBLK",(1,)),
              ("READ_FAR",(111,)),
              ("WRITE_FAR",(111,)),
+             ("JUMP_imm24", (3,)),
+             ("JUMP_IF_imm16", (12,)),
+             ("JUMP_IF_raw_imm16", (12,)),
              ("JUMP_FAR",(111,)),
              ("JUMP_FAR_imm8",(111,)),
              ("JUMP_AREC",(1,)),
@@ -100,9 +103,10 @@ return -1;
 
 def lua_items(stuff):
     for ix, (name, (argtype,)) in enumerate(stuff):
-        lua_args = {0:"", 1:"a", 11:"a,b", 12:"a,b", 111:"a,b,c"}[argtype]
+        lua_args = {0:"", 3:"a", 1:"a", 11:"a,b", 12:"a,b", 111:"a,b,c"}[argtype]
         calculation = {
                 0:"",
+                3:"|a",
                 1:"|a<<16",
                 11:"|a<<16|b<<8",
                 12:"|a<<16|b",
