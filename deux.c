@@ -590,6 +590,16 @@ struct do_next run() {
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
+        case RESET_JUMP_AREC:
+            regs.data_block[0] = regs.code_block;
+            regs.data_block[1] = tagint(0);
+
+            regs.data_block = regs.data_block[arg8_1];
+            regs.code_block = regs.data_block[0];
+            regs.icount = untag(regs.data_block[1]);
+
+            end = get_header(regs.code_block)->size / sizeof(void *);
+            break;
         case CONST_imm16:
             regs.data_block[arg8_1] = tagint(arg16);
             break;
