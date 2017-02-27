@@ -449,6 +449,10 @@ void luamon() {
                     lua_pcall(lua, n, 0, 0);
                 }
             }
+            else {
+                printf("error: %s\n", luaL_checkstring(lua, 1));
+                lua_pop(lua, 1);
+            }
         }
         free(line);
     }
