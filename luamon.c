@@ -379,7 +379,8 @@ void setup_globals(lua_State * lua) {
     lua_pushcfunction(lua, do_disassemble);
     lua_setglobal(lua, "disasm");
 
-    luaL_dostring(lua, "dofile('mnemonics.lua')");
+    int status = luaL_dofile(lua, "mnemonics.lua");
+    if (status != LUA_OK) lua_error(lua);
 }
 
 void setup_ledger(lua_State * lua) {
@@ -398,7 +399,6 @@ void setup_ledger(lua_State * lua) {
     lua_setfield(lua, -2, "__mode");   // set weak key mode
     lua_setmetatable(lua, -2);  // set ledger's metatable
     lua_settable(lua, LUA_REGISTRYINDEX);   // set ledger into registry
-    lua_pop(lua, 1);
 }
 
 void luamon() {
