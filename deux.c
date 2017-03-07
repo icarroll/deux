@@ -119,8 +119,8 @@ void mark_in(struct heap * heap) {
         last_header = last_header->link_ptr;
     }
 
-    if (regs.data_block) {
-        last_header->link_ptr = regs.data_block;
+    if (regs.arec_block) {
+        last_header->link_ptr = regs.arec_block;
         last_header->marked = true;
         //printf("root mark %x\n", last_header); //XXX
         last_header = last_header->link_ptr;
@@ -260,8 +260,8 @@ void collect_in(struct heap * heap) {
     }
 
     struct block_header * new_data_block;
-    if (regs.data_block) {
-        new_data_block = get_header(regs.data_block)->link_ptr;
+    if (regs.arec_block) {
+        new_data_block = get_header(regs.arec_block)->link_ptr;
     }
 
     update_pointers_in(heap);
@@ -275,7 +275,7 @@ void collect_in(struct heap * heap) {
     }
 
     if (regs.code_block) regs.code_block = new_code_block->data;
-    if (regs.data_block) regs.data_block = new_data_block->data;
+    if (regs.arec_block) regs.arec_block = new_data_block->data;
 }
 
 int round_to(int unit, int amount) {
@@ -566,201 +566,213 @@ struct do_next run() {
             return do_halt;
         case ALLOCATE_NOPTR:
             {
-                int size = untag(regs.data_block[arg8_2]);
-                regs.data_block[arg8_1] = allocate_noptr(size);
+                int size = untag(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = allocate_noptr(size);
             }
             break;
         case ALLOCATE_NOPTR_imm16:
-            regs.data_block[arg8_1] = allocate_noptr(arg16);
+            regs.arec_block[arg8_1] = allocate_noptr(arg16);
             break;
         case ALLOCATE_ALLPTR:
             {
-                int size = untag(regs.data_block[arg8_2]);
-                regs.data_block[arg8_1] = allocate_allptr(size);
+                int size = untag(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = allocate_allptr(size);
             }
             break;
         case ALLOCATE_ALLPTR_imm16:
-            regs.data_block[arg8_1] = allocate_allptr(arg16);
+            regs.arec_block[arg8_1] = allocate_allptr(arg16);
             break;
         case GET_CBLK:
-            regs.data_block[arg8_1] = regs.code_block;
+            regs.arec_block[arg8_1] = regs.code_block;
             break;
         case GET_INST:
-            regs.data_block[arg8_1] = tagint(regs.icount);
+            regs.arec_block[arg8_1] = tagint(regs.icount);
             break;
-        case GET_DBLK:
-            regs.data_block[arg8_1] = regs.data_block;
+        case GET_AREC:
+            regs.arec_block[arg8_1] = regs.arec_block;
+            break;
+        case GET_AREC_FAR:
+            ((void **) regs.arec_block[arg8_1])[arg8_2] = regs.arec_block;
+            break;
+        case GET_LINK:
+            regs.arec_block[arg8_1] = regs.link_data;
+            break;
+        case SET_LINK:
+            regs.link_data = regs.arec_block[arg8_1];
             break;
         case READ_FAR:
-            regs.data_block[arg8_1]
-                = ((void **) regs.data_block[arg8_2])[arg8_3];
+            regs.arec_block[arg8_1]
+                = ((void **) regs.arec_block[arg8_2])[arg8_3];
             break;
         case WRITE_FAR:
-            ((void **) regs.data_block[arg8_1])[arg8_2]
-                = regs.data_block[arg8_3];
+            ((void **) regs.arec_block[arg8_1])[arg8_2]
+                = regs.arec_block[arg8_3];
+            break;
+        case WRITE_FAR_imm8:
+            ((void **) regs.arec_block[arg8_1])[arg8_2] = (void *) arg8_3;
             break;
         //TODO check for out-of-block jumps
         case JUMP_imm24:
             regs.icount = arg24;
             break;
         case JUMP_IF_imm16:
-            if (untag(regs.data_block[arg8_1])) {
+            if (untag(regs.arec_block[arg8_1])) {
                 regs.icount = arg16;
             }
             break;
         case JUMP_IF_raw_imm16:
-            if ((uint32_t) regs.data_block[arg8_1]) {
+            if ((uint32_t) regs.arec_block[arg8_1]) {
                 regs.icount = arg16;
             }
             break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
-            regs.code_block = regs.data_block[arg8_1];
-            regs.icount = untag(regs.data_block[arg8_2]);
-            regs.data_block = regs.data_block[arg8_3];
+            regs.code_block = regs.arec_block[arg8_1];
+            regs.icount = untag(regs.arec_block[arg8_2]);
+            regs.arec_block = regs.arec_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_FAR_imm8:
-            regs.code_block = regs.data_block[arg8_1];
+            regs.code_block = regs.arec_block[arg8_1];
             regs.icount = arg8_2;
-            regs.data_block = regs.data_block[arg8_3];
+            regs.arec_block = regs.arec_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_AREC:
-            regs.data_block[0] = regs.code_block;
-            regs.data_block[1] = tagint(regs.icount);
+            regs.arec_block[0] = regs.code_block;
+            regs.arec_block[1] = tagint(regs.icount);
 
-            regs.data_block = regs.data_block[arg8_1];
-            regs.code_block = regs.data_block[0];
-            regs.icount = untag(regs.data_block[1]);
+            regs.arec_block = regs.arec_block[arg8_1];
+            regs.code_block = regs.arec_block[0];
+            regs.icount = untag(regs.arec_block[1]);
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case RESET_JUMP_AREC:
-            regs.data_block[0] = regs.code_block;
-            regs.data_block[1] = tagint(0);
+            regs.arec_block[0] = regs.code_block;
+            regs.arec_block[1] = tagint(0);
 
-            regs.data_block = regs.data_block[arg8_1];
-            regs.code_block = regs.data_block[0];
-            regs.icount = untag(regs.data_block[1]);
+            regs.arec_block = regs.arec_block[arg8_1];
+            regs.code_block = regs.arec_block[0];
+            regs.icount = untag(regs.arec_block[1]);
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case CONST_imm16:
-            regs.data_block[arg8_1] = tagint(arg16);
+            regs.arec_block[arg8_1] = tagint(arg16);
             break;
         case CONST_FAR_imm8:
-            ((void **) regs.data_block[arg8_1])[arg8_2] = tagint(arg8_3);
+            ((void **) regs.arec_block[arg8_1])[arg8_2] = tagint(arg8_3);
             break;
         case CONST_imm16_raw:
-            regs.data_block[arg8_1] = (void *) arg16;
+            regs.arec_block[arg8_1] = (void *) arg16;
             break;
         case SET_16l:
             {
                 int low16 = arg16 << 2;
-                int high14 = (uint32_t) regs.data_block[arg8_1] & 0xfffc0000;
-                regs.data_block[arg8_1] = (void *) (high14 | low16 | 0b11);
+                int high14 = (uint32_t) regs.arec_block[arg8_1] & 0xfffc0000;
+                regs.arec_block[arg8_1] = (void *) (high14 | low16 | 0b11);
             }
             break;
         case SET_16l_raw:
             {
                 int low16 = arg16 & 0xffff;
-                int high16 = (uint32_t) regs.data_block[arg8_1] & 0xffff0000;
-                regs.data_block[arg8_1] = (void *) (high16 | low16);
+                int high16 = (uint32_t) regs.arec_block[arg8_1] & 0xffff0000;
+                regs.arec_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
         case SET_14h:
             {
-                int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
+                int low16 = (uint32_t) regs.arec_block[arg8_1] & 0xffff;
                 int high14 = (arg16 & 0x3fff) << 18;
-                regs.data_block[arg8_1] = (void *) (high14 | low16);
+                regs.arec_block[arg8_1] = (void *) (high14 | low16);
             }
             break;
         case SET_16h_raw:
             {
-                int low16 = (uint32_t) regs.data_block[arg8_1] & 0xffff;
+                int low16 = (uint32_t) regs.arec_block[arg8_1] & 0xffff;
                 int high16 = arg16 << 16;
-                regs.data_block[arg8_1] = (void *) (high16 | low16);
+                regs.arec_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
         case ADD:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                uint32_t raw3 = untag(regs.data_block[arg8_3]);
-                regs.data_block[arg8_1] = tagint(raw2 + raw3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 + raw3);
             }
             break;
         case ADD_imm8:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                regs.data_block[arg8_1] = tagint(raw2 + arg8_3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 + arg8_3);
             }
             break;
         case ADD_raw:
             {
-                int raw2 = (int) regs.data_block[arg8_2];
-                int raw3 = (int) regs.data_block[arg8_3];
-                regs.data_block[arg8_1] = (void *) (raw2 + raw3);
+                int raw2 = (int) regs.arec_block[arg8_2];
+                int raw3 = (int) regs.arec_block[arg8_3];
+                regs.arec_block[arg8_1] = (void *) (raw2 + raw3);
             }
             break;
         case MUL:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                uint32_t raw3 = untag(regs.data_block[arg8_3]);
-                regs.data_block[arg8_1] = tagint(raw2 * raw3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 * raw3);
             }
             break;
         case AND:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                uint32_t raw3 = untag(regs.data_block[arg8_3]);
-                regs.data_block[arg8_1] = tagint(raw2 & raw3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 & raw3);
             }
             break;
         case OR:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                uint32_t raw3 = untag(regs.data_block[arg8_3]);
-                regs.data_block[arg8_1] = tagint(raw2 | raw3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 | raw3);
             }
             break;
         case OR_raw:
             {
-                int raw2 = (int) regs.data_block[arg8_2];
-                int raw3 = (int) regs.data_block[arg8_3];
-                regs.data_block[arg8_1] = (void *) (raw2 | raw3);
+                int raw2 = (int) regs.arec_block[arg8_2];
+                int raw3 = (int) regs.arec_block[arg8_3];
+                regs.arec_block[arg8_1] = (void *) (raw2 | raw3);
             }
             break;
         case XOR:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                uint32_t raw3 = untag(regs.data_block[arg8_3]);
-                regs.data_block[arg8_1] = tagint(raw2 ^ raw3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 ^ raw3);
             }
             break;
         case LSHIFT_imm8:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                regs.data_block[arg8_1] = tagint(raw2 << arg8_3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 << arg8_3);
             }
             break;
         case LSHIFT_imm8_raw:
             {
-                int raw = (int) regs.data_block[arg8_2];
-                regs.data_block[arg8_1] = (void *) (raw << arg8_3);
+                int raw = (int) regs.arec_block[arg8_2];
+                regs.arec_block[arg8_1] = (void *) (raw << arg8_3);
             }
             break;
         case RSHIFT_imm8:
             {
-                uint32_t raw2 = untag(regs.data_block[arg8_2]);
-                regs.data_block[arg8_1] = tagint(raw2 >> arg8_3);
+                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 >> arg8_3);
             }
             break;
         case DEBUG_WRITEHEX_raw:
-            printf("0x%08x%c", regs.data_block[arg8_1], arg8_3);
+            printf("0x%08x%c", regs.arec_block[arg8_1], arg8_3);
             break;
         case DEBUG_WRITEHEX_int:
-            printf("0x%08x%c", untag(regs.data_block[arg8_1]), arg8_3);
+            printf("0x%08x%c", untag(regs.arec_block[arg8_1]), arg8_3);
             break;
         }
     }
@@ -808,7 +820,7 @@ void create_test_sub() {
         op111(WRITE_FAR, sub_arec, cblk, sub_cblk),
         op111(CONST_FAR_imm8, sub_arec, icount, 0),
         // our data block (activation record) is subprogram's dynamic parent
-        op1(GET_DBLK, temp),
+        op1(GET_AREC, temp),
         op111(WRITE_FAR, sub_arec, dyn_parent, temp),
 
         // add 0x55 to argument
@@ -833,7 +845,7 @@ void create_test_sub() {
         op(HALT),
     };
 
-    regs.data_block = allocate_allptr(10 * sizeof(void *));
+    regs.arec_block = allocate_allptr(10 * sizeof(void *));
     regs.code_block = allocate_noptr(sizeof(source));
     memmove(regs.code_block, source, sizeof(source));
     regs.icount = 0;
@@ -844,7 +856,6 @@ void create_test_sub() {
 // save and load
 
 void save_heap() {
-    //TODO don't call gc hooks?
     collect();
 
     FILE * f = fopen(SYSTEM_IMAGE_BIN, "wb");

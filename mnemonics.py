@@ -6,9 +6,13 @@ mnemonics = [("ABORT",(0,)),
              ("ALLOCATE_ALLPTR_imm16",(12,)),
              ("GET_CBLK",(1,)),
              ("GET_INST",(1,)),
-             ("GET_DBLK",(1,)),
+             ("GET_AREC",(1,)),
+             ("GET_AREC_FAR",(11,)),
+             ("GET_LINK",(1,)),
+             ("SET_LINK",(1,)),
              ("READ_FAR",(111,)),
              ("WRITE_FAR",(111,)),
+             ("WRITE_FAR_imm8",(111,)),
              ("JUMP_imm24", (3,)),
              ("JUMP_IF_imm16", (12,)),
              ("JUMP_IF_raw_imm16", (12,)),
@@ -101,29 +105,40 @@ return -1;
 """]
 )
 
+lua_start = "calc_func = {\n"
+
 def lua_items(stuff):
     for ix, (name, (argtype,)) in enumerate(stuff):
-        lua_args = {0:"", 3:"a", 1:"a", 11:"a,b", 12:"a,b", 111:"a,b,c"}[argtype]
+        nargs = {0:0, 3:1, 1:1, 11:2, 12:2, 111:3}[argtype]
+        args = str.join(",", ["a{0}".format(n) for n in range(nargs)])
         calculation = {
                 0:"",
-                3:"|a",
-                1:"|a<<16",
-                11:"|a<<16|b<<8",
-                12:"|a<<16|b",
-                111:"|a<<16|b<<8|c",
+                3:"|a0",
+                1:"|a0<<16",
+                11:"|a0<<16|a1<<8",
+                12:"|a0<<16|a1",
+                111:"|a0<<16|a1<<8|a2",
                 }[argtype]
 
-        yield name, lua_args, ix, calculation
+        yield name, args, ix, calculation
 
-lua_functions = str.join("", [
-"""
-function {0} ({1})
-  local opcode = {2}
-  return opcode << 24 {3}
+lua_body = str.join("", ["  {0}=function ({1}) return {2} << 24 {3} end,\n"
+                         .format(*items) for items in lua_items(mnemonics)])
+
+lua_end = ("""}
+
+function calc_op(name)
+  return calc_func[name]
 end
-""".format(*items) for items in lua_items(mnemonics)])
 
-if __name__ == "__main__":
+argtypes = {
+"""
++ str.join("", ["  {0}={1!r},\n".format(name,argtype)
+                for name,(argtype,) in mnemonics])
++ "}\n"
+)
+
+def writefiles():
     with open("mnemonics.h", "w") as f:
         f.write(h_start)
         f.write(enum_code)
@@ -136,4 +151,9 @@ if __name__ == "__main__":
         f.write(from_string_to_enum_code)
 
     with open("mnemonics.lua", "w") as f:
-        f.write(lua_functions)
+        f.write(lua_start)
+        f.write(lua_body)
+        f.write(lua_end)
+
+if __name__ == "__main__":
+    writefiles()

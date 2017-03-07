@@ -74,7 +74,8 @@ void * allocate_allptr(int size);
 struct registers {
     void ** code_block;
     unsigned int icount;
-    void ** data_block;
+    void ** arec_block;
+    void * link_data;
 };
 
 void die(char * message);
