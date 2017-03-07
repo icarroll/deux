@@ -1,6 +1,8 @@
 #ifndef DEUX_H
 #define DEUX_H
 
+static const char SYSTEM_IMAGE_BIN[] = "system_image.bin";
+
 enum {
     HEAP_SIZE=16*1024*1024,             // 16 MB
     ROOT_BLOCK_SIZE=4*sizeof(void *),  // 4 items
@@ -78,5 +80,8 @@ struct registers {
 void die(char * message);
 
 void print_disassembly(void ** code, int size);
+
+void save_heap();
+void load_heap(struct heap ** heap_ptr, int size);
 
 #endif // DEUX_H

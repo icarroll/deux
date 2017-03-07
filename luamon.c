@@ -12,8 +12,6 @@
 
 //TODO
 // emit code into block
-// save image
-// load image
 // invoke activation record/code block
 
 extern struct heap * heap0;
@@ -24,6 +22,7 @@ extern void (* update_roots_hook)();
 int do_print_block(lua_State * lua);
 void new_block(lua_State * lua, struct block_header * header);
 struct block_header * get_addr_from_ledger(lua_State * lua, int n);
+void setup_ledger(lua_State * lua);
 
 lua_State * lua_state_for_gc_hooks;
 
@@ -91,14 +90,7 @@ void setup_gc_hooks(lua_State * lua) {
 int block_tostring(lua_State * lua) {
     void * obj = luaL_checkudata(lua, 1, "block");
 
-    // get ledger from registry
-    lua_pushlightuserdata(lua, heap0);
-    lua_gettable(lua, LUA_REGISTRYINDEX);
-
-    lua_pushvalue(lua, 1);   // ledger key is block argument
-    lua_gettable(lua, -2);   // look up block header address in ledger
-
-    struct block_header * header = lua_touserdata(lua, -1);
+    struct block_header * header = get_addr_from_ledger(lua, 1);
 
     char * note = (char *) (& header->note);
     lua_pushfstring(lua, "%p: layout=%s size=%dx%d=%d note=%c%c%c%c",
@@ -259,13 +251,15 @@ struct block_header * get_addr_from_ledger(lua_State * lua, int n) {
     lua_pushvalue(lua, n);   // ledger key is block object
     lua_gettable(lua, -2);   // look up block header address in ledger
 
-    return lua_touserdata(lua, -1);
+    void * temp = lua_touserdata(lua, -1);
+    if (temp == NULL) luaL_argerror(lua, n, "invalidated block");
+    return temp;
 }
 
 int do_print_block(lua_State * lua) {
     luaL_checkudata(lua, 1, "block");
     struct block_header * header = get_addr_from_ledger(lua, 1);
-    //TODO catch segfault and throw lua error
+
     print_block(header);
     return 0;
 }
@@ -299,7 +293,7 @@ int get_root_block(lua_State * lua) {
     return 1;
 }
 
-int do_alloc_data(lua_State * lua) {
+int do_alloc_noptr(lua_State * lua) {
     int size = luaL_checkinteger(lua, 1);
     void * block = allocate_noptr(size);
     if (! block) luaL_argerror(lua, 1, "can't allocate");
@@ -347,6 +341,24 @@ int do_collect(lua_State * lua) {
     return 0;
 }
 
+int do_save(lua_State * lua) {
+    save_heap();
+    return 0;
+}
+
+int do_load(lua_State * lua) {
+    load_heap(& heap0, HEAP_SIZE);
+    setup_ledger(lua);   // invalidate lua-held blocks
+
+    get_root_block(lua);
+    lua_setglobal(lua, "root");
+
+    lua_pushinteger(lua, (int) heap0);
+    lua_setglobal(lua, "heap_addr");
+
+    return 0;
+}
+
 struct luaL_Reg monitor_lib[] = {
     {"hexdump", do_hexdump},
     {"get_heap_addr", do_get_heap_addr},
@@ -354,6 +366,8 @@ struct luaL_Reg monitor_lib[] = {
     {"print_block", do_print_block},
     {"get_root", get_root_block},
     {"collect", do_collect},
+    {"save", do_save},
+    {"load", do_load},
     {NULL, NULL}
 };
 
@@ -362,7 +376,7 @@ void setup_globals(lua_State * lua) {
     lua_setglobal(lua, "mon");
 
     lua_pushinteger(lua, (int) heap0);
-    lua_setglobal(lua, "heap");
+    lua_setglobal(lua, "heap_addr");
 
     lua_pushcfunction(lua, do_hex);
     lua_setglobal(lua, "hex");
@@ -370,8 +384,8 @@ void setup_globals(lua_State * lua) {
     get_root_block(lua);
     lua_setglobal(lua, "root");
 
-    lua_pushcfunction(lua, do_alloc_data);
-    lua_setglobal(lua, "data");
+    lua_pushcfunction(lua, do_alloc_noptr);
+    lua_setglobal(lua, "noptr");
 
     lua_pushcfunction(lua, do_alloc_ptr);
     lua_setglobal(lua, "ptr");

@@ -338,12 +338,6 @@ void make_heap(struct heap ** heap_ptr, int size) {
             allocate_in(heap, ROOT_BLOCK_SIZE, all_ptr_layout));
 }
 
-void load_heap(struct heap ** heap_ptr) {
-    //TODO
-    //open("system_image.bin", WHUT);
-    die("can't load heap");
-}
-
 struct heap * heap0;
 
 bool in_heap(void * addr) {
@@ -472,6 +466,44 @@ void print_heap_in(struct heap * heap) {
 
 void print_heap() {
     print_heap_in(heap0);
+}
+
+void print_disassembly(void ** code, int size) {
+    for (int ix=0 ; ix < size/sizeof(void *) ; ix+=1) {
+        uint32_t instruction = (uint32_t) code[ix];
+
+        enum opcodes op = instruction >> 24;
+        unsigned int arg24 = instruction & 0xffffff;
+        unsigned int arg8_1 = arg24 >> 16;
+        unsigned int arg16 = arg24 & 0xffff;
+        unsigned int arg8_2 = (arg24 >> 8) & 0xff;
+        unsigned int arg8_3 = arg24 & 0xff;
+
+        printf("%x : 0x%08x - %s ", code+ix, instruction, opcode_to_mnemonic(op));
+        switch (arg_pattern(op)) {
+        case 0:
+            break;
+        case 3:
+            printf("0x%06x", arg24);
+            break;
+        case 1:
+            printf("0x%02x", arg8_1);
+            break;
+        case 11:
+            printf("0x%02x 0x%02x", arg8_1, arg8_2);
+            break;
+        case 12:
+            printf("0x%02x 0x%04x", arg8_1, arg16);
+            break;
+        case 111:
+            printf("0x%02x 0x%02x 0x%02x", arg8_1, arg8_2, arg8_3);
+            break;
+        default:
+            die("bad arg pattern");
+        }
+
+        putchar('\n');
+    }
 }
 
 // end heap display
@@ -807,141 +839,87 @@ void create_test_sub() {
     regs.icount = 0;
 }
 
-// call a virtual machine subprogram from c
-void * call_virtual(int which, void * arg) {
-    //TODO something about setting up the context to return to
-}
-
-// call c subprogram from virtual machine
-struct registers handle_jump_c(struct registers WHUT) {
-    //TODO replace with specific opcodes
-}
-
 // end virtual machine
+
+// save and load
+
+void save_heap() {
+    //TODO don't call gc hooks?
+    collect();
+
+    FILE * f = fopen(SYSTEM_IMAGE_BIN, "wb");
+    fwrite(heap0->memory, 1, heap0->next - heap0->memory, f);
+    fclose(f);
+}
+
+void load_heap(struct heap ** heap_ptr, int size) {
+    // calculate heap size
+    FILE * f = fopen(SYSTEM_IMAGE_BIN, "rb");
+    fseek(f, 0, SEEK_END);
+    int length = ftell(f);
+
+    int rounded_size = round_to(getpagesize(), size);
+    if (length > rounded_size) rounded_size = round_to(getpagesize(), length);
+
+    // allocate memory for heap
+    void * memory = mmap(NULL, rounded_size, PROT_READ | PROT_WRITE,
+                         MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (! memory) die("can't create heap");
+
+    * heap_ptr = (struct heap *) memory;
+    struct heap * heap = * heap_ptr;
+
+    // load heap from file
+    rewind(f);
+    fread(memory, 1, length, f);
+    fclose(f);
+
+    // fix up heap header
+    int delta = heap->memory - memory;
+    heap->memory -= delta;
+    heap->end = memory + rounded_size;
+    heap->next -= delta;
+
+    for (int ix=0 ; ix < NUM_ROOTS ; ix+=1) {
+        if (heap->roots[ix]) {
+            heap->roots[ix] = ((void *) heap->roots[ix]) - delta;
+        }
+    }
+
+    // fix up heap pointers
+    for (struct block_header * header=(struct block_header *) heap->start
+         ; header < (struct block_header *) heap->next
+         ; header = following_header(header)) {
+        void * block = header->data;
+        switch (header->layout) {
+        case no_ptr_layout:
+            break;
+        case all_ptr_layout:
+            // scan over pointers in block
+            for (void ** candidate = (void **) block
+                 ; candidate < (void **) (block + header->size)
+                 ; candidate += 1) {
+                // forward any non-zero aligned pointers
+                if (* candidate && ! ((int) * candidate & 0b11)) {
+                    * candidate -= delta;
+                }
+            }
+            break;
+        default:
+            die("unhandled block layout");
+        }
+    }
+
+    // allocate root block if necessary
+    if (heap->roots[0] == NULL) {
+        heap->roots[0] = get_header(
+                allocate_in(heap, ROOT_BLOCK_SIZE, all_ptr_layout));
+    }
+}
+
+// end save and load
 
 void die(char * message) {
     printf("%s\n", message);
     exit(1);
 }
-
-// monitor
-
-void print_regs() {
-    printf("data=0x%08x code=0x%08x instruction=%u\n",
-           regs.data_block, regs.code_block, regs.icount);
-}
-
-void print_disassembly(void ** code, int size) {
-    for (int ix=0 ; ix < size/sizeof(void *) ; ix+=1) {
-        uint32_t instruction = (uint32_t) code[ix];
-
-        enum opcodes op = instruction >> 24;
-        unsigned int arg24 = instruction & 0xffffff;
-        unsigned int arg8_1 = arg24 >> 16;
-        unsigned int arg16 = arg24 & 0xffff;
-        unsigned int arg8_2 = (arg24 >> 8) & 0xff;
-        unsigned int arg8_3 = arg24 & 0xff;
-
-        printf("%x : 0x%08x - %s ", code+ix, instruction, opcode_to_mnemonic(op));
-        switch (arg_pattern(op)) {
-        case 0:
-            break;
-        case 3:
-            printf("0x%06x", arg24);
-            break;
-        case 1:
-            printf("0x%02x", arg8_1);
-            break;
-        case 11:
-            printf("0x%02x 0x%02x", arg8_1, arg8_2);
-            break;
-        case 12:
-            printf("0x%02x 0x%04x", arg8_1, arg16);
-            break;
-        case 111:
-            printf("0x%02x 0x%02x 0x%02x", arg8_1, arg8_2, arg8_3);
-            break;
-        default:
-            die("bad arg pattern");
-        }
-
-        putchar('\n');
-    }
-}
-
-void skip_space(char ** text_ptr) {
-    while (isspace(** text_ptr)) * text_ptr += 1;
-}
-
-void monitor() {
-    char * line;
-    while (line = readline("mon> ")) {
-        if (! line) break;
-        if (* line) add_history(line);
-
-        char * text_ptr = line;
-
-        skip_space(& text_ptr);
-        char command = * text_ptr;
-        text_ptr += 1;
-
-        if (command == 'q') break;
-
-        char * end_ptr = text_ptr;
-        unsigned int argument = strtoumax(text_ptr, & end_ptr, 0);
-        bool has_argument = (end_ptr != text_ptr);
-
-        switch (command) {
-        case 'r':
-            print_regs();
-            break;
-        case 'C':
-            if (has_argument) {
-                regs.code_block = (void *) argument;
-                print_regs();
-            }
-            else printf("need value\n");
-            break;
-        case 'I':
-            if (has_argument) {
-                regs.icount = (unsigned int) argument;
-                print_regs();
-            }
-            else printf("need value\n");
-            break;
-        case 'D':
-            if (has_argument) {
-                regs.data_block = (void *) argument;
-                print_regs();
-            }
-            else printf("need value\n");
-            break;
-        case 'g':
-            //TODO start vm
-            break;
-        case 'd':
-            if (has_argument) {
-                void ** code_block = (void **) argument;
-                print_disassembly(code_block, get_header(code_block)->size);
-            }
-            else printf("need value\n");
-            break;
-        case 'b':
-            //TODO display block
-            break;
-        case 'h':
-            //TODO display header
-            break;
-        default:
-            printf("unknown command '%c'\n", command);
-            break;
-        }
-
-        free(line);
-    }
-
-quit:
-    putchar('\n');
-}
-
-// end monitor
