@@ -62,10 +62,23 @@ bool heap_ok_in(struct heap * heap);
 
 void print_heap_in(struct heap * heap);
 
+void * tagblockptr(void * ptr);
+void * tagsymptr(void * ptr);
+void * tagconsptr(void * ptr);
+void * untagptr(void * ptr);
+uint32_t getptrtag(void * ptr);
+void * tagptr(void * ptr, uint32_t tag);
+
 void * tagint(uint32_t val);
-uint32_t untag(void * val);
+uint32_t untagint(void * val);
 
 void collect();
+
+uint32_t make_note(char * c);
+enum {
+    CONS_NOTE = 'c' | 'o' << 8 | 'n' << 16 | 's' << 24,
+    SYMB_NOTE = 's' | 'y' << 8 | 'm' << 16 | 'b' << 24,
+};
 
 void * allocate_noptr(int size);
 void * allocate_allptr(int size);

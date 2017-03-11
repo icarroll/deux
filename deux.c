@@ -12,9 +12,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include <readline/history.h>
-#include <readline/readline.h>
-
 #include "deux.h"
 #include "mnemonics.h"
 
@@ -26,6 +23,42 @@ void hurl() {
 
 // memory management
 
+bool istaggedptr(void * ptr) {
+    return (uint32_t) ptr & 0b11 != 0b11;
+}
+
+void * tagblockptr(void * ptr) {
+    return ptr;
+}
+
+void * tagsymptr(void * ptr) {
+    return (void *) ((uint32_t) ptr | 0b01);
+}
+
+void * tagconsptr(void * ptr) {
+    return (void *) ((uint32_t) ptr | 0b10);
+}
+
+void * untagptr(void * ptr) {
+    return (void *) ((uint32_t) ptr & ~0b11);
+}
+
+uint32_t getptrtag(void * ptr) {
+    return (uint32_t) ptr & 0b11;
+}
+
+void * tagptr(void * ptr, uint32_t tag) {
+    return (void *) ((uint32_t) untagptr(ptr) | tag);
+}
+
+void * tagint(uint32_t val) {
+    return (void *) ((val << 2) | 0b11);
+}
+
+uint32_t untagint(void * val) {
+    return (uint32_t) val >> 2;
+}
+
 struct registers regs;
 
 bool in_heap_in(struct heap * heap, void * addr) {
@@ -33,6 +66,8 @@ bool in_heap_in(struct heap * heap, void * addr) {
 }
 
 struct block_header * get_header(void * block_ptr) {
+    if (getptrtag(block_ptr) != 0) die("get header of unaligned pointer");
+
     return (struct block_header *) (block_ptr - hdr_sz);
 }
 
@@ -61,22 +96,23 @@ void print_block(struct block_header * header) {
         for (int ix=0 ; ix < header->size/sizeof(void *) ; ix+=1) {
             void * value = header->data[ix];
             printf("% 4d: 0x%08x", ix, value);
-            switch ((uint32_t) value & 0b11) {
-            case 0b00:   // pointer
+            int tag = (uint32_t) value & 0b11;
+            switch (tag) {
+            case 0b11:   // uint32_t
+                printf(" = int:%u", untagint(value));
+                break;
+            default:   // pointer
                 {
-                    if (in_heap(value)) {
-                        struct block_header * pheader = get_header(value);
+                    //TODO print cons and symbol properly
+                    void * ptr_value = untagptr(value);
+                    if (in_heap(ptr_value)) {
+                        struct block_header * pheader = get_header(ptr_value);
                         printf(" -> layout=%s size=%d note=%.*s",
                                layout_str(pheader->layout), pheader->size,
                                4, & pheader->note);
                     }
                 }
                 break;
-            case 0b11:   // uint32_t
-                printf(" = int:%u", untag(value));
-                break;
-            default:
-                die("unhandled value tag");
             }
 
             putchar('\n');
@@ -112,6 +148,7 @@ void mark_in(struct heap * heap) {
         last_header = last_header->link_ptr;
     }
 
+    //TODO check regs.link_data for a root
     if (regs.code_block) {
         last_header->link_ptr = regs.code_block;
         last_header->marked = true;
@@ -146,9 +183,9 @@ void mark_in(struct heap * heap) {
                      ; candidate < end
                      ; candidate += 1) {
                     //printf("    @%x :", candidate); //XXX
-                    // don't follow null or unaligned or out of heap pointers
-                    if (* candidate && ! ((int) * candidate & 0b11) && in_heap_in(heap, candidate)) {
-                        void * block = * candidate;
+                    // don't follow null or integers or out of heap pointers
+                    if (* candidate && istaggedptr(* candidate) && in_heap_in(heap, * candidate)) {
+                        void * block = untagptr(* candidate);
                         struct block_header * header = get_header(block);
                         if (! header->marked) {
                             header->link_ptr = NULL;
@@ -206,11 +243,14 @@ void update_pointers_in(struct heap * heap) {
             for (void ** candidate = (void **) block
                  ; candidate < (void **) (block + header->size)
                  ; candidate += 1) {
-                // forward any non-zero aligned pointers
+                // forward any aligned pointers
                 //printf("    @%x :", candidate); //XXX
-                if (* candidate && ! ((int) * candidate & 0b11)) {
+                if (* candidate && istaggedptr(* candidate) && in_heap_in(heap, * candidate)) {
                     //printf(" %x ->", *candidate); //XXX
-                    * candidate = get_header(* candidate)->link_ptr + hdr_sz;
+                    uint32_t tag = getptrtag(* candidate);
+                    void * other_block = untagptr(* candidate);
+                    other_block = get_header(other_block)->link_ptr + hdr_sz;
+                    * candidate = tagptr(other_block, tag);
                     //printf(" %x\n", *candidate); //XXX
                 }
                 //else printf(" skip (candidate) %x\n", *candidate); //XXX
@@ -313,7 +353,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
 
     heap->next = new_next;
 
-    header->note = make_note("shrg");
+    header->note = make_note("....");
 
     if (! heap_ok_in(heap)) hurl();
     return header->data;
@@ -517,14 +557,6 @@ void throw_run_error(char * message) {
     longjmp(abort_run, 1);
 }
 
-void * tagint(uint32_t val) {
-    return (void *) ((val << 2) | 0b11);
-}
-
-uint32_t untag(void * val) {
-    return (uint32_t) val >> 2;
-}
-
 struct do_next {
     enum {
         abort_code,
@@ -539,6 +571,10 @@ struct do_next do_halt = {halt_code};
 
 void unimpl() {
     die("unimplemented instruction");
+}
+
+void ** untagptrptr(void * ptr) {
+    return (void **) untagptr(ptr);
 }
 
 struct do_next run() {
@@ -566,7 +602,7 @@ struct do_next run() {
             return do_halt;
         case ALLOCATE_NOPTR:
             {
-                int size = untag(regs.arec_block[arg8_2]);
+                int size = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = allocate_noptr(size);
             }
             break;
@@ -575,7 +611,7 @@ struct do_next run() {
             break;
         case ALLOCATE_ALLPTR:
             {
-                int size = untag(regs.arec_block[arg8_2]);
+                int size = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = allocate_allptr(size);
             }
             break;
@@ -592,7 +628,7 @@ struct do_next run() {
             regs.arec_block[arg8_1] = regs.arec_block;
             break;
         case GET_AREC_FAR:
-            ((void **) regs.arec_block[arg8_1])[arg8_2] = regs.arec_block;
+            untagptrptr(regs.arec_block[arg8_1])[arg8_2] = regs.arec_block;
             break;
         case GET_LINK:
             regs.arec_block[arg8_1] = regs.link_data;
@@ -602,21 +638,21 @@ struct do_next run() {
             break;
         case READ_FAR:
             regs.arec_block[arg8_1]
-                = ((void **) regs.arec_block[arg8_2])[arg8_3];
+                = untagptrptr(regs.arec_block[arg8_2])[arg8_3];
             break;
         case WRITE_FAR:
-            ((void **) regs.arec_block[arg8_1])[arg8_2]
+            untagptrptr(regs.arec_block[arg8_1])[arg8_2]
                 = regs.arec_block[arg8_3];
             break;
         case WRITE_FAR_imm8:
-            ((void **) regs.arec_block[arg8_1])[arg8_2] = (void *) arg8_3;
+            untagptrptr(regs.arec_block[arg8_1])[arg8_2] = (void *) arg8_3;
             break;
         //TODO check for out-of-block jumps
         case JUMP_imm24:
             regs.icount = arg24;
             break;
         case JUMP_IF_imm16:
-            if (untag(regs.arec_block[arg8_1])) {
+            if (untagint(regs.arec_block[arg8_1])) {
                 regs.icount = arg16;
             }
             break;
@@ -627,34 +663,38 @@ struct do_next run() {
             break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
+            //TODO check for jump to nonzerotag pointer
             regs.code_block = regs.arec_block[arg8_1];
-            regs.icount = untag(regs.arec_block[arg8_2]);
+            regs.icount = untagint(regs.arec_block[arg8_2]);
             regs.arec_block = regs.arec_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_FAR_imm8:
+            //TODO check for jump to nonzerotag pointer
             regs.code_block = regs.arec_block[arg8_1];
             regs.icount = arg8_2;
             regs.arec_block = regs.arec_block[arg8_3];
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case JUMP_AREC:
+            //TODO check for jump to nonzerotag pointer
             regs.arec_block[0] = regs.code_block;
             regs.arec_block[1] = tagint(regs.icount);
 
             regs.arec_block = regs.arec_block[arg8_1];
             regs.code_block = regs.arec_block[0];
-            regs.icount = untag(regs.arec_block[1]);
+            regs.icount = untagint(regs.arec_block[1]);
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
         case RESET_JUMP_AREC:
+            //TODO check for jump to nonzerotag pointer
             regs.arec_block[0] = regs.code_block;
             regs.arec_block[1] = tagint(0);
 
             regs.arec_block = regs.arec_block[arg8_1];
             regs.code_block = regs.arec_block[0];
-            regs.icount = untag(regs.arec_block[1]);
+            regs.icount = untagint(regs.arec_block[1]);
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
@@ -662,7 +702,7 @@ struct do_next run() {
             regs.arec_block[arg8_1] = tagint(arg16);
             break;
         case CONST_FAR_imm8:
-            ((void **) regs.arec_block[arg8_1])[arg8_2] = tagint(arg8_3);
+            untagptrptr(regs.arec_block[arg8_1])[arg8_2] = tagint(arg8_3);
             break;
         case CONST_imm16_raw:
             regs.arec_block[arg8_1] = (void *) arg16;
@@ -697,14 +737,14 @@ struct do_next run() {
             break;
         case ADD:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 + raw3);
             }
             break;
         case ADD_imm8:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = tagint(raw2 + arg8_3);
             }
             break;
@@ -717,22 +757,22 @@ struct do_next run() {
             break;
         case MUL:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 * raw3);
             }
             break;
         case AND:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 & raw3);
             }
             break;
         case OR:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 | raw3);
             }
             break;
@@ -745,14 +785,14 @@ struct do_next run() {
             break;
         case XOR:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untag(regs.arec_block[arg8_3]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 ^ raw3);
             }
             break;
         case LSHIFT_imm8:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = tagint(raw2 << arg8_3);
             }
             break;
@@ -764,7 +804,7 @@ struct do_next run() {
             break;
         case RSHIFT_imm8:
             {
-                uint32_t raw2 = untag(regs.arec_block[arg8_2]);
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = tagint(raw2 >> arg8_3);
             }
             break;
@@ -772,7 +812,7 @@ struct do_next run() {
             printf("0x%08x%c", regs.arec_block[arg8_1], arg8_3);
             break;
         case DEBUG_WRITEHEX_int:
-            printf("0x%08x%c", untag(regs.arec_block[arg8_1]), arg8_3);
+            printf("0x%08x%c", untagint(regs.arec_block[arg8_1]), arg8_3);
             break;
         }
     }
@@ -911,7 +951,7 @@ void load_heap(struct heap ** heap_ptr, int size) {
                  ; candidate < (void **) (block + header->size)
                  ; candidate += 1) {
                 // forward any non-zero aligned pointers
-                if (* candidate && ! ((int) * candidate & 0b11)) {
+                if (* candidate && istaggedptr(* candidate) && in_heap_in(heap, * candidate)) {
                     * candidate -= delta;
                 }
             }

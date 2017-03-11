@@ -105,11 +105,23 @@ int block_index(lua_State * lua) {
 
     if (lua_type(lua, 2) == LUA_TSTRING) {
         lua_pushliteral(lua, "print");
-        if (!lua_rawequal(lua, -1, -2)) luaL_argerror(lua, 2, "no such method");
+        if (lua_rawequal(lua, -1, -2)) {
+            lua_pop(lua, 2);
+            lua_pushcfunction(lua, do_print_block);
+            return 1;
+        }
+        else lua_pop(lua, 1);
 
-        lua_pop(lua, 2);
-        lua_pushcfunction(lua, do_print_block);
-        return 1;
+        lua_pushliteral(lua, "note");
+        if (lua_rawequal(lua, -1, -2)) {
+            lua_pop(lua, 2);
+            struct block_header * header = get_addr_from_ledger(lua, 1);
+            lua_pushlstring(lua, (char *) (& header->note), 4);
+            return 1;
+        }
+        else lua_pop(lua, 1);
+
+        luaL_argerror(lua, 2, "no such method");
     }
 
     int ix = luaL_checkinteger(lua, 2);
@@ -125,15 +137,13 @@ int block_index(lua_State * lua) {
 
         case all_ptr_layout:
             switch ((uint32_t) value & 0b11) {
-            case 0b00:   // pointer
-                if (in_heap(value)) new_block(lua, get_header(value));
+            case 0b11:   // uint32_t
+                lua_pushinteger(lua, untagint(value));
+                break;
+            default:   // pointer
+                if (in_heap(value)) new_block(lua, get_header(untagptr(value)));
                 else lua_pushlightuserdata(lua, value);
                 break;
-            case 0b11:   // uint32_t
-                lua_pushinteger(lua, untag(value));
-                break;
-            default:
-                die("unhandled value tag");
             }
             break;
 
@@ -148,6 +158,21 @@ int block_index(lua_State * lua) {
 
 int block_newindex(lua_State * lua) {
     luaL_checkudata(lua, 1, "block");
+
+    if (lua_type(lua, 2) == LUA_TSTRING) {
+        lua_pushliteral(lua, "note");
+        if (lua_rawequal(lua, -1, 2)) {
+            lua_pop(lua, 1);
+            char * new_note = luaL_checkstring(lua, 3);
+            struct block_header * header = get_addr_from_ledger(lua, 1);
+            header->note = make_note(new_note);
+            return 0;
+        }
+        else lua_pop(lua, 1);
+
+        luaL_argerror(lua, 2, "no such method");
+    }
+
     int ix = luaL_checkinteger(lua, 2);
 
     struct block_header * header = get_addr_from_ledger(lua, 1);
@@ -155,6 +180,9 @@ int block_newindex(lua_State * lua) {
         switch (header->layout) {
         case no_ptr_layout:
             switch (lua_type(lua, 3)) {
+            case LUA_TNIL:
+                header->data[ix] = NULL;
+                break;
             case LUA_TNUMBER:
                 header->data[ix] = (void *) ((int) lua_tointeger(lua, 3));
                 break;
@@ -171,6 +199,9 @@ int block_newindex(lua_State * lua) {
 
         case all_ptr_layout:
             switch (lua_type(lua, 3)) {
+            case LUA_TNIL:
+                header->data[ix] = NULL;
+                break;
             case LUA_TNUMBER:
                 header->data[ix] = tagint(lua_tointeger(lua, 3));
                 break;
@@ -178,7 +209,22 @@ int block_newindex(lua_State * lua) {
                 header->data[ix] = lua_touserdata(lua, 3);
                 break;
             case LUA_TUSERDATA:
-                header->data[ix] = get_addr_from_ledger(lua, 3)->data;
+                {
+                    struct block_header * pheader = get_addr_from_ledger(lua, 3);
+                    void * block = pheader->data;
+                    switch (pheader->note) {
+                    case CONS_NOTE:
+                        block = tagconsptr(block);
+                        break;
+                    case SYMB_NOTE:
+                        block = tagsymptr(block);
+                        break;
+                    default:
+                        block = tagblockptr(block);
+                        break;
+                    }
+                    header->data[ix] = block;
+                }
                 break;
             default:
                 luaL_argerror(lua, 3, "bad argument");
@@ -215,10 +261,8 @@ void setup_block_metatable(lua_State * lua) {
     lua_pushcfunction(lua, block_newindex);
     lua_setfield(lua, -2, "__newindex");
 
-    /*
     lua_pushcfunction(lua, block_same);
     lua_setfield(lua, -2, "__eq");
-    */
 
     lua_pop(lua, 1);
 }
@@ -295,6 +339,14 @@ int get_root_block(lua_State * lua) {
 
 int do_alloc_noptr(lua_State * lua) {
     int size = luaL_checkinteger(lua, 1);
+    void * block = allocate_noptr(size * sizeof(void *));
+    if (! block) luaL_argerror(lua, 1, "can't allocate");
+    new_block(lua, get_header(block));
+    return 1;
+}
+
+int do_alloc_noptr_bytes(lua_State * lua) {
+    int size = luaL_checkinteger(lua, 1);
     void * block = allocate_noptr(size);
     if (! block) luaL_argerror(lua, 1, "can't allocate");
     new_block(lua, get_header(block));
@@ -303,7 +355,7 @@ int do_alloc_noptr(lua_State * lua) {
 
 int do_alloc_ptr(lua_State * lua) {
     int size = luaL_checkinteger(lua, 1);
-    void * block = allocate_allptr(size);
+    void * block = allocate_allptr(size * sizeof(void *));
     if (! block) luaL_argerror(lua, 1, "can't allocate");
     new_block(lua, get_header(block));
     return 1;
@@ -385,10 +437,13 @@ void setup_globals(lua_State * lua) {
     lua_setglobal(lua, "root");
 
     lua_pushcfunction(lua, do_alloc_noptr);
-    lua_setglobal(lua, "noptr");
+    lua_setglobal(lua, "alloc_code");
+
+    lua_pushcfunction(lua, do_alloc_noptr_bytes);
+    lua_setglobal(lua, "alloc_data");
 
     lua_pushcfunction(lua, do_alloc_ptr);
-    lua_setglobal(lua, "ptr");
+    lua_setglobal(lua, "alloc_ptr");
 
     lua_pushcfunction(lua, do_disassemble);
     lua_setglobal(lua, "disasm");
