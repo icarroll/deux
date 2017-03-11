@@ -20,6 +20,7 @@ extern void (* add_roots_hook)(struct block_header **);
 extern void (* update_roots_hook)();
 
 int do_print_block(lua_State * lua);
+int do_write_string(lua_State * lua);
 void new_block(lua_State * lua, struct block_header * header);
 struct block_header * get_addr_from_ledger(lua_State * lua, int n);
 void setup_ledger(lua_State * lua);
@@ -117,6 +118,14 @@ int block_index(lua_State * lua) {
             lua_pop(lua, 2);
             struct block_header * header = get_addr_from_ledger(lua, 1);
             lua_pushlstring(lua, (char *) (& header->note), 4);
+            return 1;
+        }
+        else lua_pop(lua, 1);
+
+        lua_pushliteral(lua, "write_string");
+        if (lua_rawequal(lua, -1, -2)) {
+            lua_pop(lua, 2);
+            lua_pushcfunction(lua, do_write_string);
             return 1;
         }
         else lua_pop(lua, 1);
@@ -305,6 +314,16 @@ int do_print_block(lua_State * lua) {
     struct block_header * header = get_addr_from_ledger(lua, 1);
 
     print_block(header);
+    return 0;
+}
+
+int do_write_string(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+    struct block_header * header = get_addr_from_ledger(lua, 1);
+    char * s = luaL_checkstring(lua, 2);
+
+    memset(header->data, 0, header->size);
+    strncpy((char *) header->data, s, header->size - 1);
     return 0;
 }
 
