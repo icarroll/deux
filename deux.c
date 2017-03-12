@@ -72,11 +72,10 @@ struct block_header * get_header(void * block_ptr) {
 }
 
 void print_block_header(struct block_header * header) {
-    printf("0x%x: link=%x marked=%s layout=%s size=%dx%d=%d note=%.*s next@0x%x\n",
+    printf("0x%x: link=%x marked=%s layout=%s size=%dx%d=%d note=%.*s data@0x%x\n",
            header, header->link_ptr, bool_str(header->marked),
            layout_str(header->layout), header->size/sizeof(void *),
-           sizeof(void *), header->size, 4, & header->note,
-           following_header(header));
+           sizeof(void *), header->size, 4, & header->note, header->data);
 }
 
 void print_block(struct block_header * header) {
