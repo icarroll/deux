@@ -8,7 +8,7 @@ enum {
     ROOT_BLOCK_SIZE=4*sizeof(void *),  // 4 items
 };
 
-static const int ALIGNMENT = 8;
+static const int ALIGNMENT = sizeof(void *);
 
 enum which_root {
     ROOT_BLOCK,
