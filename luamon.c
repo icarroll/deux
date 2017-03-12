@@ -21,6 +21,7 @@ extern void (* update_roots_hook)();
 
 int do_print_block(lua_State * lua);
 int do_write_string(lua_State * lua);
+int do_read_string(lua_State * lua);
 void new_block(lua_State * lua, struct block_header * header);
 struct block_header * get_addr_from_ledger(lua_State * lua, int n);
 void setup_ledger(lua_State * lua);
@@ -126,6 +127,14 @@ int block_index(lua_State * lua) {
         if (lua_rawequal(lua, -1, -2)) {
             lua_pop(lua, 2);
             lua_pushcfunction(lua, do_write_string);
+            return 1;
+        }
+        else lua_pop(lua, 1);
+
+        lua_pushliteral(lua, "read_string");
+        if (lua_rawequal(lua, -1, -2)) {
+            lua_pop(lua, 2);
+            lua_pushcfunction(lua, do_read_string);
             return 1;
         }
         else lua_pop(lua, 1);
@@ -327,11 +336,25 @@ int do_write_string(lua_State * lua) {
     return 0;
 }
 
+int do_read_string(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+    struct block_header * header = get_addr_from_ledger(lua, 1);
+
+    lua_pushstring(lua, (char *) header->data);
+    return 1;
+}
+
 int do_hex(lua_State * lua) {
     int n = luaL_checkinteger(lua, 1);
     char s[19];
     snprintf(s, 19, "0x%x", n);
     lua_pushstring(lua, s);
+    return 1;
+}
+
+int do_raw(lua_State * lua) {
+    int n = luaL_checkinteger(lua, 1);
+    lua_pushlightuserdata(lua, (void *) n);
     return 1;
 }
 
@@ -451,6 +474,9 @@ void setup_globals(lua_State * lua) {
 
     lua_pushcfunction(lua, do_hex);
     lua_setglobal(lua, "hex");
+
+    lua_pushcfunction(lua, do_raw);
+    lua_setglobal(lua, "raw");
 
     get_root_block(lua);
     lua_setglobal(lua, "root");

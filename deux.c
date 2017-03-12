@@ -321,6 +321,7 @@ int round_to(int unit, int amount) {
     return ((amount - 1) / unit + 1) * unit;
 }
 
+//TODO needs to not die on error
 uint32_t make_note(char * c) {
     if (strnlen(c, 4) != 4) die("block note too short");
     return c[3]<<24 | c[2]<<16 | c[1]<<8 | c[0];
