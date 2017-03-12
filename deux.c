@@ -444,20 +444,31 @@ char * layout_str(enum layout val) {
     }
 }
 
+int min(int a, int b) {
+    return a < b ? a : b;
+}
+
 void print_hexdump(void * addr, int length) {
-    for (int ix=0 ; ix < length ; ix+=16) {
-        printf("%08x: ", addr+ix);
-        for (int seg=0 ; seg < 4 ; seg+=1) {
-            for (int ix2=0 ; ix2 < 4 ; ix2+=1) {
-                printf("%02x ", ((uint8_t *) addr)[ix+seg*4+ix2]);
-            }
-            putchar(' ');
+    for (void * end=addr+length ; addr < end ; addr+=16) {
+        int howmany = min(end - addr, 16);
+
+        printf("%08x:", addr);
+        for (int n=0 ; n < howmany ; n+=1) {
+            if (n%4 == 0) putchar(' ');
+            printf("%02x ", ((uint8_t *) addr)[n]);
         }
 
-        for (int jx=0 ; jx < 16 ; jx+=1) {
-            char c = ((char *) addr)[ix+jx];
+        for (int n=0 ; n < 16-howmany ; n+=1) {
+            if (n%4 == 0) putchar(' ');
+            printf("   ");
+        }
+
+        putchar(' ');
+        for (int n=0 ; n < howmany ; n+=1) {
+            char c = ((char *) addr)[n];
             putchar(isprint(c) ? c : '.');
         }
+
         putchar('\n');
     }
 }
