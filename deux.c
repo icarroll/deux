@@ -24,7 +24,7 @@ void hurl() {
 // memory management
 
 bool istaggedptr(void * ptr) {
-    return (uint32_t) ptr & 0b11 != 0b11;
+    return ((uint32_t) ptr & 0b11) != 0b11;
 }
 
 void * tagblockptr(void * ptr) {
