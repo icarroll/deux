@@ -24,6 +24,7 @@ int do_write_string(lua_State * lua);
 int do_read_string(lua_State * lua);
 void new_block(lua_State * lua, struct block_header * header);
 struct block_header * get_addr_from_ledger(lua_State * lua, int n);
+void setup_reverse_ledger(lua_State * lua);
 void setup_ledger(lua_State * lua);
 
 lua_State * lua_state_for_gc_hooks;
@@ -61,6 +62,11 @@ void get_roots_from_lua(struct block_header ** mark_list_head) {
 void update_roots_in_lua() {
     lua_State * lua = lua_state_for_gc_hooks;
 
+    setup_reverse_ledger(lua);   // clear out reverse ledger
+    // get reverse ledger from registry
+    lua_pushlightuserdata(lua, heap0->start);
+    lua_gettable(lua, LUA_REGISTRYINDEX);
+
     // get ledger from registry
     lua_pushlightuserdata(lua, heap0);
     lua_gettable(lua, LUA_REGISTRYINDEX);
@@ -68,7 +74,9 @@ void update_roots_in_lua() {
     // iterate over ledger
     lua_pushnil(lua);
     while (lua_next(lua, -2)) {
-        // copy the ledger key (need to use twice)
+        // copy the block object reference (need to use thrice)
+        lua_pushvalue(lua, -2);
+        lua_insert(lua, -2);
         lua_pushvalue(lua, -2);
         lua_insert(lua, -2);
 
@@ -76,7 +84,12 @@ void update_roots_in_lua() {
         struct block_header * header = lua_touserdata(lua, -1);
         lua_pop(lua, 1);
         lua_pushlightuserdata(lua, header->link_ptr);
-        lua_settable(lua, -4);
+        lua_settable(lua, -5);
+
+        // add entry to reverse ledger
+        lua_pushlightuserdata(lua, header->link_ptr);
+        lua_insert(lua, -2);
+        lua_settable(lua, -5);
     }
 
     lua_pop(lua, 1);
@@ -359,6 +372,19 @@ int do_raw(lua_State * lua) {
 }
 
 void new_block(lua_State * lua, struct block_header * header) {
+    // get reverse ledger from registry
+    lua_pushlightuserdata(lua, heap0->start);
+    lua_gettable(lua, LUA_REGISTRYINDEX);
+
+    // first check for address in reverse ledger
+    lua_pushlightuserdata(lua, header);   // reverse ledger key is header address
+    lua_gettable(lua, -2);   // is there existing block object for this address?
+    if (! lua_isnil(lua, -1)) {   // if there is,
+        lua_remove(lua, -2);   // remove reverse ledger from stack
+        return;   // return block object
+    }
+    else lua_pop(lua, 1);   // remove nil, leave reverse ledger on stack
+
     // new block object
     lua_newuserdata(lua, 1);
     luaL_setmetatable(lua, "block");
@@ -367,11 +393,19 @@ void new_block(lua_State * lua, struct block_header * header) {
     lua_pushlightuserdata(lua, heap0);
     lua_gettable(lua, LUA_REGISTRYINDEX);
 
+    // enter block in ledger
     lua_pushvalue(lua, -2);   // ledger key is new block object
-    lua_pushlightuserdata(lua, header);  // ledger value is block header address
+    lua_pushlightuserdata(lua, header);   // ledger value is block header address
     lua_settable(lua, -3);   // enter new block in ledger
 
     lua_pop(lua, 1);   // remove ledger, leave new block object on stack
+
+    // enter block in reverse ledger
+    lua_pushlightuserdata(lua, header);   // reverse ledger key is address
+    lua_pushvalue(lua, -2);   // copy block object reference as value
+    lua_settable(lua, -4);   // enter block in reverse ledger
+
+    lua_remove(lua, -2);   // remove reverse ledger
 }
 
 int get_root_block(lua_State * lua) {
@@ -497,6 +531,17 @@ void setup_globals(lua_State * lua) {
     if (status != LUA_OK) lua_error(lua);
 }
 
+void setup_reverse_ledger(lua_State * lua) {
+    // reverse ledger mapping addresses to block objects
+    lua_pushlightuserdata(lua, heap0->start);   // registry key is heap start
+    lua_newtable(lua);   // reverse ledger table
+    lua_newtable(lua);   // reverse ledger's metatable (to set weak value mode)
+    lua_pushstring(lua, "v");   // values are weak
+    lua_setfield(lua, -2, "__mode");   // set weak value mode
+    lua_setmetatable(lua, -2);  // set ledger's metatable
+    lua_settable(lua, LUA_REGISTRYINDEX);   // set reverse ledger into registry
+}
+
 void setup_ledger(lua_State * lua) {
     // create weak-key ledger to track lua-held heap blocks
     //   each block lua holds is tracked in ledger
@@ -513,6 +558,8 @@ void setup_ledger(lua_State * lua) {
     lua_setfield(lua, -2, "__mode");   // set weak key mode
     lua_setmetatable(lua, -2);  // set ledger's metatable
     lua_settable(lua, LUA_REGISTRYINDEX);   // set ledger into registry
+
+    setup_reverse_ledger(lua);
 }
 
 void luamon() {
