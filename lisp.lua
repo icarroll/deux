@@ -21,7 +21,7 @@ function parse_cons_item(text)
         return {result=math.floor(number), rest=text}
     elseif c == "(" then
         text = skip_space(text:sub(2))
-        if text:sub(1,1) == ")" then return {result=raw(0), rest=test:sub(2)} end
+        if text:sub(1,1) == ")" then return {result=raw(0), rest=text:sub(2)} end
 
         local head = parse_cons_item(text)
         if head.result == nil then error("expected item") end
@@ -30,13 +30,15 @@ function parse_cons_item(text)
         local tail = parse_tail_cons(text)
 
         text = skip_space(tail.rest)
-        if text:sub(1,1) ~= ")" then error("expected )") end
+        if text:sub(1,1) ~= ")" then
+            error("expected ) near " .. text:sub(1,10))
+        end
 
         return {result=cons(head.result, tail.result), rest=text:sub(2)}
     elseif c == ")" then
-        return {result=nil, rest=text:sub(2)}
+        return {result=nil, rest=text}
     elseif c == "." then
-        return {result=nil, rest=text:sub(2)}
+        return {result=nil, rest=text}
     elseif c == "'" then
         text = skip_space(text:sub(2))
         local temp = parse_cons_item(text)
@@ -52,15 +54,15 @@ end
 function parse_tail_cons(text)
     if text:sub(1,1) == "." then
         text = skip_space(text:sub(2))
-        local temp = parse_cons_item(text)
-        if temp.result == nil then error("expected item") end
-        return temp
+        local item = parse_cons_item(text)
+        if item.result == nil then error("expected item") end
+        return item
     end
 
-    local temp = parse_cons_item(text)
-    if temp.result == nil then return temp end
+    local head = parse_cons_item(text)
+    if head.result == nil then return {result=raw(0), rest=head.rest} end
 
-    local tail = parse_tail_cons(skip_space(temp.rest))
+    local tail = parse_tail_cons(skip_space(head.rest))
 
     return {result=cons(head.result, tail.result), rest=tail.rest}
 end
@@ -81,17 +83,22 @@ function cons(hd, tl)
     return mem
 end
 
-interned_symbols = {}
+interned_symbol = {}
 
 function sym(name)
-    local mem = interned_symbols[name]
+    local mem = interned_symbol[name]
     if mem then return mem end
 
     mem = alloc_data(#name + 1)
     mem.note = "symb"
     mem:write_string(name)
-    interned_symbols[name] = mem
+    interned_symbol[name] = mem
     return mem
+end
+
+function list(item, ...)
+    if not item then return raw(0)
+    else return cons(item, list(...)) end
 end
 
 function eval(expr, env)
@@ -102,12 +109,86 @@ function eval(expr, env)
     end
 
     if expr.note == "symb" then
+        -- look up variable
         local temp = env[expr]
-        if temp == nil then error("unbound symbol " .. expr:read_string()) end
-        return temp
+        if temp then return temp
+        else error("unbound symbol " .. expr:read_string()) end
     elseif expr.note == "cons" then
-        -- TODO
+        -- special form or function invocation
+        local head = expr[0]
+        local tail = expr[1]
+        if head.note == "symb" then
+            -- invoke special form
+            --XXX problem: equal blocks aren't the same key to special_form
+            -- solution?: index by userdata not lua table
+            return special_form[head](tail, env)
+        else
+            -- evaluate and invoke
+            -- TODO
+        end
     else
+        -- other memory blocks self-evaluate
         return expr
     end
+end
+
+-- local newenv, params, body = tail[0], tail[1][0], tail[1][1][0]
+
+special_form = {
+    [sym("quote")] = do_quote,
+    [sym("if")] = do_if,
+    [sym("fn")] = do_fn,
+    [sym("mac")] = do_mac,
+    [sym("new")] = do_new,
+    [sym("set")] = do_set,
+}
+
+function do_quote(args, env)
+    return args[0]
+end
+
+function do_if(args, env)
+    if args == raw(0) then return args   -- no clauses, return nil
+    elseif args[1] == raw(0) then return eval(args[0], env)   -- else clause
+    else
+        local temp = eval(args[0], env)   -- eval condition
+        if temp == raw(0) then return do_if(args[1][1], env)   -- false
+        else return eval(args[1][0], env)   -- true
+        end
+    end
+end
+
+function do_fn(args, env)
+    local params = args[0]
+    local body = args[1]
+    local newenv = {}
+    setmetatable(newenv, {__index=env})
+    return list(sym("#<fn>"), newenv, params, body)
+end
+
+function do_mac(args, env)
+end
+
+function do_new(args, env)
+    local key, value = args[0], eval(args[1][0], env)
+    env[key] = value
+    return value
+end
+
+function do_set(args, env)
+    local key, value = args[0], eval(args[1][0], env)
+
+    local function lookup(env, key, value)
+        if not env then error("unbound variable " .. key:read_string()) end
+
+        if rawget(env, key) then
+            env[key] = value
+            return value
+        else
+            local parent = getmetatable(env).__index
+            return lookup(parent, key, value)
+        end
+    end
+
+    return lookup(env, key, value)
 end
