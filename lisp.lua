@@ -81,21 +81,33 @@ function cons(hd, tl)
     return mem
 end
 
-symbol_table = {}
+interned_symbols = {}
 
 function sym(name)
-    local mem = symbol_table[name]
+    local mem = interned_symbols[name]
     if mem then return mem end
 
     mem = alloc_data(#name + 1)
     mem.note = "symb"
     mem:write_string(name)
-    symbol_table[name] = mem
+    interned_symbols[name] = mem
     return mem
 end
 
-if myname == "-t" then
-    assert(symbol_char("a"))
-    assert(not symbol_char("`"))
-    print("OK")
+function eval(expr, env)
+    if type(expr) == "number" then
+        return expr
+    elseif type(expr) ~= "userdata" then
+        error("can't evaluate " .. type(expr))
+    end
+
+    if expr.note == "symb" then
+        local temp = env[expr]
+        if temp == nil then error("unbound symbol " .. expr:read_string()) end
+        return temp
+    elseif expr.note == "cons" then
+        -- TODO
+    else
+        return expr
+    end
 end
