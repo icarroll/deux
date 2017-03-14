@@ -98,7 +98,8 @@ end
 
 function list(item, ...)
     if not item then return raw(0)
-    else return cons(item, list(...)) end
+    else return cons(item, list(...))
+    end
 end
 
 function eval(expr, env)
@@ -110,21 +111,31 @@ function eval(expr, env)
 
     if expr.note == "symb" then
         -- look up variable
-        local temp = env[expr]
+        local temp = lookup(env, expr)
         if temp then return temp
-        else error("unbound symbol " .. expr:read_string()) end
+        else error("unbound symbol " .. expr:read_string())
+        end
     elseif expr.note == "cons" then
         -- special form or function invocation
         local head = expr[0]
         local tail = expr[1]
         if head.note == "symb" then
             -- invoke special form
-            --XXX problem: equal blocks aren't the same key to special_form
-            -- solution?: index by userdata not lua table
-            return special_form[head](tail, env)
-        else
+            if head == sym("quote") then return do_quote(tail, env)
+            elseif head == sym("if") then return do_if(tail, env)
+            elseif head == sym("fn") then return do_fn(tail, env)
+            elseif head == sym("mac") then return do_mac(tail, env)
+            elseif head == sym("new") then return do_new(tail, env)
+            elseif head == sym("set") then return do_set(tail, env)
+            end
+
             -- evaluate and invoke
-            -- TODO
+            local fn = eval(head, env)
+            if fn[0] ~= sym("#<fn>") then error("bad fn") end
+            local fnenv, formals, body = fn[1][0], fn[1][1][0], fn[1][1][1][0]
+            local actuals = eval_list(tail, env)
+            newenv = extend_env(fnenv, formals, actuals)
+            return eval_list_one(body, newenv)
         end
     else
         -- other memory blocks self-evaluate
@@ -132,16 +143,41 @@ function eval(expr, env)
     end
 end
 
--- local newenv, params, body = tail[0], tail[1][0], tail[1][1][0]
+function eval_list(items, env)
+    if items == raw(0) then return items end
 
-special_form = {
-    [sym("quote")] = do_quote,
-    [sym("if")] = do_if,
-    [sym("fn")] = do_fn,
-    [sym("mac")] = do_mac,
-    [sym("new")] = do_new,
-    [sym("set")] = do_set,
-}
+    local head, tail = items[0], items[1]
+    return cons(eval(head, env), eval_list(tail, env))
+end
+
+function eval_list_one(items, env)
+    if items == raw(0) then return items end
+
+    local head, tail = items[0], items[1]
+    local temp = eval(head, env)
+    if tail == raw(0) then return temp
+    else return eval_list_one(tail, env)
+    end
+end
+
+function lookup(env, key)
+    if env == raw(0) then return nil
+    elseif env[0][0] == key then return env[0][1]
+    else return lookup(env[1], key)
+    end
+end
+
+function extend_env(env, formals, actuals)
+    if formals == raw(0) then return env
+    elseif formals.note == "symb" then
+        return cons(cons(formals, actuals), env)
+    else
+        local fhead, ftail = formals[0], formals[1]
+        local ahead, atail = actuals[0], actuals[1]
+        local tempenv = extend_env(env, fhead, ahead)
+        return extend_env(tempenv, ftail, atail)
+    end
+end
 
 function do_quote(args, env)
     return args[0]
@@ -161,34 +197,66 @@ end
 function do_fn(args, env)
     local params = args[0]
     local body = args[1]
-    local newenv = {}
-    setmetatable(newenv, {__index=env})
+    local newenv = cons(cons(raw(0), raw(0)), env)
     return list(sym("#<fn>"), newenv, params, body)
 end
 
 function do_mac(args, env)
+    -- TODO
+    error("can't mac yet")
 end
 
 function do_new(args, env)
     local key, value = args[0], eval(args[1][0], env)
-    env[key] = value
+    env[1] = cons(cons(key, value), env[1])
     return value
 end
 
 function do_set(args, env)
     local key, value = args[0], eval(args[1][0], env)
 
-    local function lookup(env, key, value)
-        if not env then error("unbound variable " .. key:read_string()) end
-
-        if rawget(env, key) then
-            env[key] = value
-            return value
-        else
-            local parent = getmetatable(env).__index
-            return lookup(parent, key, value)
+    local function lookupset(env)
+        if env == raw(0) then error("unbound variable " .. key:read_string())
+        elseif env[0][0] == key then env[0][1] = value
+        else lookupset(env[1])
         end
     end
 
-    return lookup(env, key, value)
+    lookupset(env)
+    return value
+end
+
+function show(item)
+    seen = {}
+
+    function show_one(item)
+        if type(item) == "number" then io.stdout:write(item)
+        elseif getmetatable(item) == nil then io.stdout:write(tostring(item))
+        elseif item.note == "symb" then io.stdout:write(item:read_string())
+        else
+            if seen[item] then io.stdout:write("...")
+            else
+                seen[item] = true
+                io.stdout:write("(")
+                show_one(item[0])
+                show_rest(item[1])
+                io.stdout:write(")")
+            end
+        end
+    end
+
+    function show_rest(items)
+        if items == raw(0) then return
+        elseif getmetatable(items) ~= nil then
+            io.stdout:write(" ")
+            show_one(items[0])
+            show_rest(items[1])
+        else
+            io.stdout:write(" . ")
+            show_one(items)
+        end
+    end
+
+    show_one(item)
+    io.stdout:write("\n")
 end
