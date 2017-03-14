@@ -83,17 +83,22 @@ function cons(hd, tl)
     return mem
 end
 
-interned_symbol = {}
-
 function sym(name)
-    local mem = interned_symbol[name]
-    if mem then return mem end
+    function findsym(syms)
+        if syms == raw(0) then return nil
+        elseif syms[0]:read_string() == name then return syms[0]
+        else return findsym(syms[1])
+        end
+    end
 
-    mem = alloc_data(#name + 1)
-    mem.note = "symb"
-    mem:write_string(name)
-    interned_symbol[name] = mem
-    return mem
+    local temp = findsym(root[0])
+    if temp then return temp end
+
+    local newsym = alloc_data(#name + 1)
+    newsym.note = "symb"
+    newsym:write_string(name)
+    root[0] = cons(newsym, root[0])
+    return newsym
 end
 
 function list(item, ...)
