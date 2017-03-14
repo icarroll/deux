@@ -93,6 +93,8 @@ struct registers {
 
 void die(char * message);
 
+void print_heap();
+
 void print_disassembly(void ** code, int size);
 
 void save_heap();

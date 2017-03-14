@@ -475,6 +475,7 @@ int do_save(lua_State * lua) {
 }
 
 int do_load(lua_State * lua) {
+    //TODO free existing heap first
     load_heap(& heap0, HEAP_SIZE);
     setup_ledger(lua);   // invalidate lua-held blocks
 
@@ -501,6 +502,11 @@ int do_readline(lua_State * lua) {
     return 1;
 }
 
+int do_print_heap(lua_State * lua) {
+    print_heap();
+    return 0;
+}
+
 struct luaL_Reg monitor_lib[] = {
     {"hexdump", do_hexdump},
     {"get_heap_addr", do_get_heap_addr},
@@ -511,6 +517,7 @@ struct luaL_Reg monitor_lib[] = {
     {"save", do_save},
     {"load", do_load},
     {"disasm", do_disassemble},
+    {"print_heap", do_print_heap},
     {NULL, NULL}
 };
 
