@@ -109,7 +109,8 @@ function eval(expr, env)
         error("can't evaluate " .. type(expr))
     end
 
-    if expr.note == "symb" then
+    if not getmetatable(expr) then return expr
+    elseif expr.note == "symb" then
         -- look up variable
         local temp = lookup(env, expr)
         if temp then return temp
