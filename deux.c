@@ -353,7 +353,7 @@ void * allocate_in(struct heap * heap, int size, enum layout layout) {
 
     heap->next = new_next;
 
-    header->note = make_note("....");
+    header->note = make_note("____");
 
     if (! heap_ok_in(heap)) hurl();
     return header->data;
