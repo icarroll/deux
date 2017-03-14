@@ -26,7 +26,7 @@ test: runtest
 .PHONY: test debug debug_do clean
 
 clean:
-	rm -f $(OBJ) $(DEP) luamon runtest mnemonics.c mnemonics.h
+	rm -f $(OBJ) $(DEP) luamon runtest mnemonics.c mnemonics.h mnemonics.lua
 
 
 debug:
