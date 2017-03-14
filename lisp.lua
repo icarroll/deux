@@ -131,11 +131,22 @@ function eval(expr, env)
 
             -- evaluate and invoke
             local fn = eval(head, env)
-            if fn[0] ~= sym("#<fn>") then error("bad fn") end
-            local fnenv, formals, body = fn[1][0], fn[1][1][0], fn[1][1][1][0]
-            local actuals = eval_list(tail, env)
-            newenv = extend_env(fnenv, formals, actuals)
-            return eval_list_one(body, newenv)
+            if fn[0] == sym("#<mac>") then
+                local fnenv, formals, body
+                    = fn[1][0], fn[1][1][0], fn[1][1][1][0]
+                local actuals = tail
+                newenv = extend_env(fnenv, formals, actuals)
+                local command = eval_list_one(body, newenv)
+                return eval(command, newenv)
+            elseif fn[0] == sym("#<fn>") then
+                local fnenv, formals, body
+                    = fn[1][0], fn[1][1][0], fn[1][1][1][0]
+                local actuals = eval_list(tail, env)
+                newenv = extend_env(fnenv, formals, actuals)
+                return eval_list_one(body, newenv)
+            else
+                error("bad invoke " .. fn)
+            end
         end
     else
         -- other memory blocks self-evaluate
@@ -202,8 +213,10 @@ function do_fn(args, env)
 end
 
 function do_mac(args, env)
-    -- TODO
-    error("can't mac yet")
+    local params = args[0]
+    local body = args[1]
+    local newenv = cons(cons(raw(0), raw(0)), env)
+    return list(sym("#<mac>"), newenv, params, body)
 end
 
 function do_new(args, env)
@@ -259,4 +272,17 @@ function show(item)
 
     show_one(item)
     io.stdout:write("\n")
+end
+
+function repl(env)
+    if not env then env = list(cons(raw(0), raw(0))) end
+
+    while true do
+        local line = readline("lisp> ")
+        if not line then print() ; break end
+        local expr = parse(line)
+        local result = eval(expr, env)
+        show(result)
+    end
+    return env
 end

@@ -487,6 +487,20 @@ int do_load(lua_State * lua) {
     return 0;
 }
 
+int do_readline(lua_State * lua) {
+    char * prompt = luaL_checkstring(lua, -1);
+    char * line = readline(prompt);
+    if (! line) {
+        lua_pushnil(lua);
+        return 1;
+    }
+
+    if (* line) add_history(line);
+    lua_pushstring(lua, line);
+    free(line);
+    return 1;
+}
+
 struct luaL_Reg monitor_lib[] = {
     {"hexdump", do_hexdump},
     {"get_heap_addr", do_get_heap_addr},
@@ -496,6 +510,7 @@ struct luaL_Reg monitor_lib[] = {
     {"collect", do_collect},
     {"save", do_save},
     {"load", do_load},
+    {"disasm", do_disassemble},
     {NULL, NULL}
 };
 
@@ -524,8 +539,8 @@ void setup_globals(lua_State * lua) {
     lua_pushcfunction(lua, do_alloc_ptr);
     lua_setglobal(lua, "alloc_ptr");
 
-    lua_pushcfunction(lua, do_disassemble);
-    lua_setglobal(lua, "disasm");
+    lua_pushcfunction(lua, do_readline);
+    lua_setglobal(lua, "readline");
 
     int status = luaL_dofile(lua, "mnemonics.lua");
     if (status != LUA_OK) lua_error(lua);
