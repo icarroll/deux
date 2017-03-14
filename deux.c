@@ -937,6 +937,8 @@ void load_heap(struct heap ** heap_ptr, int size) {
     fclose(f);
 
     // fix up heap header
+    void * old_start = heap->memory + sizeof(struct heap);
+    void * old_next = heap->next;
     int delta = heap->memory - memory;
     heap->memory -= delta;
     heap->end = memory + rounded_size;
@@ -962,7 +964,8 @@ void load_heap(struct heap ** heap_ptr, int size) {
                  ; candidate < (void **) (block + header->size)
                  ; candidate += 1) {
                 // forward any non-zero aligned pointers
-                if (* candidate && istaggedptr(* candidate) && in_heap_in(heap, * candidate)) {
+                if (* candidate && istaggedptr(* candidate)
+                        && old_start <= * candidate && * candidate < old_next) {
                     * candidate -= delta;
                 }
             }
