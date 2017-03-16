@@ -551,6 +551,9 @@ void setup_globals(lua_State * lua) {
 
     int status = luaL_dofile(lua, "mnemonics.lua");
     if (status != LUA_OK) lua_error(lua);
+
+    status = luaL_dofile(lua, "lisp.lua");
+    if (status != LUA_OK) lua_error(lua);
 }
 
 void setup_reverse_ledger(lua_State * lua) {
@@ -637,5 +640,10 @@ void luamon() {
 }
 
 int main(int argc, char * argv[]) {
+    //TODO
+    // mon.load()
+    // dofile "lisp.lua"
+    // root[1] = repl(root[1])
+    // mon.save()
     luamon();
 }

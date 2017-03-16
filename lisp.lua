@@ -1,5 +1,8 @@
 local myname = ...
 
+SYMBOLS = 0
+ENVIRONMENT = 1
+
 function parse(text)
     text = skip_space(text)
     local temp = parse_cons_item(text)
@@ -91,13 +94,13 @@ function sym(name)
         end
     end
 
-    local temp = findsym(root[0])
+    local temp = findsym(root[SYMBOLS])
     if temp then return temp end
 
     local newsym = alloc_data(#name + 1)
     newsym.note = "symb"
     newsym:write_string(name)
-    root[0] = cons(newsym, root[0])
+    root[SYMBOLS] = cons(newsym, root[SYMBOLS])
     return newsym
 end
 
@@ -134,26 +137,11 @@ function eval(expr, env)
             elseif head == sym("new") then return do_new(tail, env)
             elseif head == sym("set") then return do_set(tail, env)
             end
-
-            -- evaluate and invoke
-            local fn = eval(head, env)
-            if fn[0] == sym("#<mac>") then
-                local fnenv, formals, body
-                    = fn[1][0], fn[1][1][0], fn[1][1][1][0]
-                local actuals = tail
-                newenv = extend_env(fnenv, formals, actuals)
-                local command = eval_list_one(body, newenv)
-                return eval(command, newenv)
-            elseif fn[0] == sym("#<fn>") then
-                local fnenv, formals, body
-                    = fn[1][0], fn[1][1][0], fn[1][1][1][0]
-                local actuals = eval_list(tail, env)
-                newenv = extend_env(fnenv, formals, actuals)
-                return eval_list_one(body, newenv)
-            else
-                error("bad invoke " .. fn)
-            end
         end
+
+        -- evaluate and invoke
+        local fn = eval(head, env)
+        return do_invoke(fn, tail, env)
     else
         -- other memory blocks self-evaluate
         return expr
@@ -163,8 +151,12 @@ end
 function eval_list(items, env)
     if items == raw(0) then return items end
 
-    local head, tail = items[0], items[1]
-    return cons(eval(head, env), eval_list(tail, env))
+    if getmetatable(items) ~= nil and items.note == "cons" then
+        local head, tail = items[0], items[1]
+        return cons(eval(head, env), eval_list(tail, env))
+    else
+        return eval(items, env)
+    end
 end
 
 function eval_list_one(items, env)
@@ -225,6 +217,22 @@ function do_mac(args, env)
     return list(sym("#<mac>"), newenv, params, body)
 end
 
+function do_invoke(fn, actuals, env)
+    if fn[0] == sym("#<fn>") then
+        local fnenv, formals, body = fn[1][0], fn[1][1][0], fn[1][1][1][0]
+        actuals = eval_list(actuals, env)
+        newenv = extend_env(fnenv, formals, actuals)
+        return eval_list_one(body, newenv)
+    elseif fn[0] == sym("#<mac>") then
+        local fnenv, formals, body = fn[1][0], fn[1][1][0], fn[1][1][1][0]
+        newenv = extend_env(fnenv, formals, actuals)
+        local command = eval_list_one(body, newenv)
+        return eval(command, newenv)
+    else
+        error("bad invoke " .. fn)
+    end
+end
+
 function do_new(args, env)
     local key, value = args[0], eval(args[1][0], env)
     env[1] = cons(cons(key, value), env[1])
@@ -252,7 +260,7 @@ function show(item)
         if type(item) == "number" then io.stdout:write(item)
         elseif getmetatable(item) == nil then io.stdout:write(tostring(item))
         elseif item.note == "symb" then io.stdout:write(item:read_string())
-        else
+        elseif item.note == "cons" then
             if seen[item] then io.stdout:write("...")
             else
                 seen[item] = true
@@ -261,16 +269,16 @@ function show(item)
                 show_rest(item[1])
                 io.stdout:write(")")
             end
+        else io.stdout:write("[block " .. item.note .. "]")
         end
     end
 
     function show_rest(items)
-        if items == raw(0) then return
-        elseif getmetatable(items) ~= nil then
+        if getmetatable(items) ~= nil and items.note == "cons" then
             io.stdout:write(" ")
             show_one(items[0])
             show_rest(items[1])
-        else
+        elseif items ~= raw(0) then
             io.stdout:write(" . ")
             show_one(items)
         end
@@ -280,15 +288,63 @@ function show(item)
     io.stdout:write("\n")
 end
 
-function repl(env)
-    if not env then env = list(cons(raw(0), raw(0))) end
+lisp = {}
+
+function lisp.repl(env)
+    local stdenv
+    if not env then
+        env = root[ENVIRONMENT]
+        stdenv = true
+    else stdenv = false
+    end
 
     while true do
+        ::start::
+
         local line = readline("lisp> ")
         if not line then print() ; break end
-        local expr = parse(line)
-        local result = eval(expr, env)
+        local expr
+        ok, msg = pcall(function () expr = parse(line) end)
+        if not ok then
+            print("parse error: " .. msg)
+            goto start
+        end
+
+        if not expr then goto start end
+
+        local result
+        ok, msg = pcall(function () result = eval(expr, env) end)
+        if not ok then
+            print("eval error: " .. msg)
+            goto start
+        end
         show(result)
     end
-    return env
+
+    if stdenv then root[ENVIRONMENT] = env
+    else return env
+    end
+end
+
+function lisp.load(filename, env)
+    if not env then env = root[ENVIRONMENT] end
+
+    local f = io.open(filename, "r")
+    local text = f:read("a")
+    f:close()
+
+    text = skip_space(text)
+    while #text > 0 do
+        local temp = parse_cons_item(text)
+        if not temp.result then
+            error(string.format("unexpected %s", text:sub(1,1)))
+        end
+
+        eval(temp.result, env)
+        text = skip_space(temp.rest)
+    end
+end
+
+if root[ENVIRONMENT] == raw(0) then
+    root[ENVIRONMENT] = list(cons(raw(0), raw(0)))
 end
