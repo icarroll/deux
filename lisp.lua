@@ -227,7 +227,7 @@ function do_invoke(fn, actuals, env)
         local fnenv, formals, body = fn[1][0], fn[1][1][0], fn[1][1][1][0]
         newenv = extend_env(fnenv, formals, actuals)
         local command = eval_list_one(body, newenv)
-        return eval(command, newenv)
+        return eval(command, env)
     else
         error("bad invoke " .. fn)
     end
