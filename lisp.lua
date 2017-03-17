@@ -261,7 +261,9 @@ function show(item)
         elseif getmetatable(item) == nil then io.stdout:write(tostring(item))
         elseif item.note == "symb" then io.stdout:write(item:read_string())
         elseif item.note == "cons" then
-            if seen[item] then io.stdout:write("...")
+            if getmetatable(item[0]) ~= nil and item[0].note == "cons" and item[0][0] == raw(0) then
+                io.stdout:write("[env]")
+            elseif seen[item] then io.stdout:write("...")
             else
                 seen[item] = true
                 io.stdout:write("(")
