@@ -354,7 +354,7 @@ function lisp.repl(env)
         local line = readline("lisp> ")
         if not line then print() ; break end
         local expr
-        ok, msg = pcall(function () expr = parse(line) end)
+        ok, msg = xpcall(function () expr = parse(line) end, debug.traceback)
         if not ok then
             print("parse error: " .. msg)
             goto start
@@ -363,7 +363,7 @@ function lisp.repl(env)
         if not expr then goto start end
 
         local result
-        ok, msg = pcall(function () result = eval(expr, env) end)
+        ok, msg = xpcall(function () result = eval(expr, env) end, debug.traceback)
         if not ok then
             print("eval error: " .. msg)
             goto start
