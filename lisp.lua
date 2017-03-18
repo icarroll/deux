@@ -4,6 +4,7 @@ SYMBOLS = 0
 ENVIRONMENT = 1
 
 function parse(text)
+    if text:sub(-1,-1) ~= "\n" then text = text .. "\n" end
     text = skip_space(text)
     local temp = parse_cons_item(text)
 
@@ -71,11 +72,12 @@ function parse_tail_cons(text)
 end
 
 function skip_space(text)
-    return text:match("^%s*(.*)$")
-end
-
-function quote(item)
-    return cons(sym("quote"), cons(item, nil))
+    text = text:match("^%s*(.*)$")
+    if text:sub(1,1) == ";" then
+        text = text:match("^;.-\n(.*)$")
+        return skip_space(text)
+    else return text
+    end
 end
 
 function cons(hd, tl)
