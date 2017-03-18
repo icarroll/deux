@@ -138,6 +138,7 @@ function eval(expr, env)
             elseif head == sym("mac") then return do_mac(tail, env)
             elseif head == sym("new") then return do_new(tail, env)
             elseif head == sym("set") then return do_set(tail, env)
+            elseif head == sym("builtin") then return do_builtin(tail, env)
             end
         end
 
@@ -230,8 +231,47 @@ function do_invoke(fn, actuals, env)
         newenv = extend_env(fnenv, formals, actuals)
         local command = eval_list_one(body, newenv)
         return eval(command, env)
+    elseif fn[0] == sym("#<builtin>") then
+        local which = fn[1][0]
+        actuals = eval_list(actuals, env)
+        if which == sym("iscons") then
+            local item = actuals[0]
+            if type(item) == "userdata" and getmetatable(item) ~= nil
+                and item.note == "cons" then return sym("t")
+            else return raw(0)
+            end
+        elseif which == sym("issame") then
+            local item1, item2 = actuals[0], actuals[1][0]
+            if item1 == item2 then return sym("t")
+            else return raw(0)
+            end
+        elseif which == sym("plus") then
+            return do_plus(actuals)
+        elseif which == sym("minus") then
+            return do_minus(actuals)
+        elseif which == sym("times") then
+            return do_times(actuals)
+        end
     else
         error("bad invoke " .. fn)
+    end
+end
+
+function do_plus(items)
+    if items == raw(0) then return 0
+    else return items[0] + do_plus(items[1])
+    end
+end
+
+function do_minus(items)
+    if items == raw(0) then return 0
+    else return items[0] - do_minus(items[1])
+    end
+end
+
+function do_times(items)
+    if items == raw(0) then return 1
+    else return items[0] * do_times(items[1])
     end
 end
 
@@ -253,6 +293,11 @@ function do_set(args, env)
 
     lookupset(env)
     return value
+end
+
+function do_builtin(args, env)
+    local which = args[0]
+    return list(sym("#<builtin>"), which)
 end
 
 function show(item)
@@ -352,3 +397,5 @@ end
 if root[ENVIRONMENT] == raw(0) then
     root[ENVIRONMENT] = list(cons(raw(0), raw(0)))
 end
+
+lisp.load("lisp.lisp")
