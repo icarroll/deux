@@ -253,7 +253,7 @@ function do_invoke(fn, actuals, env)
             return do_times(actuals)
         end
     else
-        error("bad invoke " .. fn)
+        error("bad invoke")
     end
 end
 
