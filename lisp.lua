@@ -234,7 +234,13 @@ function do_invoke(fn, actuals, env)
     elseif fn[0] == sym("#<builtin>") then
         local which = fn[1][0]
         actuals = eval_list(actuals, env)
-        if which == sym("iscons") then
+        if which == sym("issym") then
+            local item = actuals[0]
+            if type(item) == "userdata" and getmetatable(item) ~= nil
+                and item.note == "symb" then return sym("t")
+            else return raw(0)
+            end
+        elseif which == sym("iscons") then
             local item = actuals[0]
             if type(item) == "userdata" and getmetatable(item) ~= nil
                 and item.note == "cons" then return sym("t")

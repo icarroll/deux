@@ -32,9 +32,10 @@
               xs)
        ys))
 
+(new sym? (builtin issym))
 (new cons? (builtin iscons))
-(new same? (builtin issame))
 
+(new same? (builtin issame))
 (def alike? (a b)
      (if (same? a b) t
        (and2 (cons? a) (cons? b))
