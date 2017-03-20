@@ -47,7 +47,24 @@ function parse_cons_item(text)
         text = skip_space(text:sub(2))
         local temp = parse_cons_item(text)
         if temp.result == nil then error("expected quoted item") end
-        return {result=quote(temp.result), rest=temp.rest}
+        return {result=list(sym("quote"), temp.result), rest=temp.rest}
+    elseif c == "`" then
+        text = skip_space(text:sub(2))
+        local temp = parse_cons_item(text)
+        if temp.result == nil then error("expected quoted item") end
+        return {result=list(sym("quasiquote"), temp.result), rest=temp.rest}
+    elseif c == "," then
+        if text:sub(2,2) == "@" then
+            text = skip_space(text:sub(3))
+            local temp = parse_cons_item(text)
+            if temp.result == nil then error("expected quoted item") end
+            return {result=list(sym("unquote-splicing"), temp.result), rest=temp.rest}
+        else
+            text = skip_space(text:sub(2))
+            local temp = parse_cons_item(text)
+            if temp.result == nil then error("expected quoted item") end
+            return {result=list(sym("unquote"), temp.result), rest=temp.rest}
+        end
     else
         local name
         name, text = text:match("^([%w!$%%&*+-./:<=>?@^_~]+)(.*)")
@@ -113,6 +130,7 @@ function list(item, ...)
 end
 
 function eval(expr, env)
+    -- io.stdout:write("eval: ") ; show(expr)
     if type(expr) == "number" then
         return expr
     elseif type(expr) ~= "userdata" then
@@ -130,6 +148,7 @@ function eval(expr, env)
         -- special form or function invocation
         local head = expr[0]
         local tail = expr[1]
+        --[[
         if head.note == "symb" then
             -- invoke special form
             if head == sym("quote") then return do_quote(tail, env)
@@ -141,6 +160,7 @@ function eval(expr, env)
             elseif head == sym("builtin") then return do_builtin(tail, env)
             end
         end
+        ]]
 
         -- evaluate and invoke
         local fn = eval(head, env)
@@ -231,6 +251,16 @@ function do_invoke(fn, actuals, env)
         newenv = extend_env(fnenv, formals, actuals)
         local command = eval_list_one(body, newenv)
         return eval(command, env)
+    elseif fn[0] == sym("#<special>") then
+        local which = fn[1][0]
+        if which == sym("quote") then return do_quote(actuals, env)
+        elseif which == sym("if") then return do_if(actuals, env)
+        elseif which == sym("fn") then return do_fn(actuals, env)
+        elseif which == sym("mac") then return do_mac(actuals, env)
+        elseif which == sym("new") then return do_new(actuals, env)
+        elseif which == sym("set") then return do_set(actuals, env)
+        elseif which == sym("builtin") then return do_builtin(actuals, env)
+        end
     elseif fn[0] == sym("#<builtin>") then
         local which = fn[1][0]
         actuals = eval_list(actuals, env)
@@ -402,7 +432,15 @@ function lisp.load(filename, env)
 end
 
 if root[ENVIRONMENT] == raw(0) then
-    root[ENVIRONMENT] = list(cons(raw(0), raw(0)))
+    root[ENVIRONMENT] = list(
+        cons(raw(0), raw(0)),
+        cons(sym("quote"), list(sym("#<special>"), sym("quote"))),
+        cons(sym("if"), list(sym("#<special>"), sym("if"))),
+        cons(sym("fn"), list(sym("#<special>"), sym("fn"))),
+        cons(sym("mac"), list(sym("#<special>"), sym("mac"))),
+        cons(sym("new"), list(sym("#<special>"), sym("new"))),
+        cons(sym("set"), list(sym("#<special>"), sym("set"))),
+        cons(sym("builtin"), list(sym("#<special>"), sym("builtin"))))
 end
 
 lisp.load("lisp.lisp")
