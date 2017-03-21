@@ -87,25 +87,29 @@
 (def second (xs)
      (head (tail xs)))
 
-;(def frob (item)
-;     (if (sym? item)
-;            (list 'list 'quote item)
-;         (and2 (cons? item) (same? (second item) 'unquote))
-;            (list 'list item)
-;         (and2 (cons? item) (same? (second item) 'unquote-splicing))
-;            item
-;         (cons? item)
-;            (map frob item)
-;         (list 'list item)))
-;(new quasiquote
-;  (mac (x)
-;    (if (cons? x) (cons 'append (map frob x))
-;        (list 'quote x))))
-
 (def qq (x)
      (if (cons? x)
              (if (same? 'unquote (head x)) (second x)
-                 ())
+                 (same? 'quasiquote (head x)) (qq (qq (second x)))
+                 (cons? (head x))
+                     (if (same? 'unquote-splicing (head (head x)))
+                             (list 'append (second (head x)) (qq (tail x)))
+                         (list 'cons (qq (head x)) (qq (tail x))))
+                 (list 'cons (qq (head x)) (qq (tail x))))
          (list 'quote x)))
 (defmac quasiquote (thing)
     (qq thing))
+
+(def these (items)
+    (if (null? items) ()
+        (cons (head items) (those (tail items)))))
+
+(def those (items)
+    (if (null? items) ()
+        (these (tail items))))
+
+(defmac let (pairs . body)
+    `((fn ,(these pairs) ,@body) ,@(those pairs)))
+
+(defmac with (var val . body)
+    `((fn (,var) ,@body) ,val))

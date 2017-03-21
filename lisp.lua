@@ -145,24 +145,10 @@ function eval(expr, env)
         else error("unbound symbol " .. expr:read_string())
         end
     elseif expr.note == "cons" then
-        -- special form or function invocation
+        -- evaluate and invoke special form or function
         local head = expr[0]
         local tail = expr[1]
-        --[[
-        if head.note == "symb" then
-            -- invoke special form
-            if head == sym("quote") then return do_quote(tail, env)
-            elseif head == sym("if") then return do_if(tail, env)
-            elseif head == sym("fn") then return do_fn(tail, env)
-            elseif head == sym("mac") then return do_mac(tail, env)
-            elseif head == sym("new") then return do_new(tail, env)
-            elseif head == sym("set") then return do_set(tail, env)
-            elseif head == sym("builtin") then return do_builtin(tail, env)
-            end
-        end
-        ]]
 
-        -- evaluate and invoke
         local fn = eval(head, env)
         return do_invoke(fn, tail, env)
     else
@@ -444,3 +430,4 @@ if root[ENVIRONMENT] == raw(0) then
 end
 
 lisp.load("lisp.lisp")
+lisp.repl()
