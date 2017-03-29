@@ -640,10 +640,5 @@ void luamon() {
 }
 
 int main(int argc, char * argv[]) {
-    //TODO
-    // mon.load()
-    // dofile "lisp.lua"
-    // root[1] = repl(root[1])
-    // mon.save()
     luamon();
 }
