@@ -18,8 +18,8 @@
 (new def (mac (name argspec . body) (list 'new name (list 'fn argspec . body))))
 (new defmac (mac (name argspec . body) (list 'new name (list 'mac argspec . body))))
 
-(def map (f xs)
-     (if xs (cons (f (head xs)) (map f (tail xs)))
+(def map1 (f xs)
+     (if xs (cons (f (head xs)) (map1 f (tail xs)))
        nil))
 
 (def not (c)
@@ -108,8 +108,14 @@
     (if (null? items) ()
         (these (tail items))))
 
-(defmac let (pairs . body)
+(defmac with (pairs . body)
     `((fn ,(these pairs) ,@body) ,@(those pairs)))
 
-(defmac with (var val . body)
+(defmac let (var val . body)
     `((fn (,var) ,@body) ,val))
+
+(defmac do args
+    `((fn () ,@args)))
+
+(new reads (builtin read_sexpr))
+(new writes (builtin write_sexpr))
