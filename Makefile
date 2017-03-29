@@ -18,11 +18,6 @@ mnemonics.h mnemonics.c mnemonics.lua: mnemonics.py
 
 -include $(DEP)
 
-runtest: runtest.o deux.o mnemonics.o mt19937ar.o
-
-test: runtest
-	./runtest
-
 .PHONY: test debug debug_do clean
 
 clean:
