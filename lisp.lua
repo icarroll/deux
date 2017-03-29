@@ -273,6 +273,12 @@ function do_invoke(fn, actuals, env)
             return do_minus(actuals)
         elseif which == sym("times") then
             return do_times(actuals)
+        elseif which == sym("read_sexpr") then
+            local line = readline("")
+            return parse(line)
+        elseif which == sym("write_sexpr") then
+            show(actuals[0])
+            return raw(0)
         end
     else
         error("bad invoke")
