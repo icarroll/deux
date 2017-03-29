@@ -396,7 +396,7 @@ function lisp.repl(env)
             print("eval error: " .. msg)
             goto start
         end
-        show(result)
+        if result ~= raw(0) then show(result) end
     end
 
     if stdenv then root[ENVIRONMENT] = env
