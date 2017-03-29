@@ -27,6 +27,22 @@ bool istaggedptr(void * ptr) {
     return ((uint32_t) ptr & 0b11) != 0b11;
 }
 
+bool istaggedint(void * ptr) {
+    return ((uint32_t) ptr & 0b11) == 0b11;
+}
+
+bool istaggedblock(void * ptr) {
+    return ((uint32_t) ptr & 0b11) == 0b00;
+}
+
+bool istaggedsym(void * ptr) {
+    return ((uint32_t) ptr & 0b11) == 0b01;
+}
+
+bool istaggedcons(void * ptr) {
+    return ((uint32_t) ptr & 0b11) == 0b10;
+}
+
 void * tagblockptr(void * ptr) {
     return ptr;
 }

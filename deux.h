@@ -62,6 +62,10 @@ bool heap_ok_in(struct heap * heap);
 
 void print_heap_in(struct heap * heap);
 
+bool istaggedint(void * ptr);
+bool istaggedblock(void * ptr);
+bool istaggedsym(void * ptr);
+bool istaggedcons(void * ptr);
 void * tagblockptr(void * ptr);
 void * tagsymptr(void * ptr);
 void * tagconsptr(void * ptr);
