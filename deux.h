@@ -95,6 +95,17 @@ struct registers {
     void * link_data;
 };
 
+struct do_next {
+    enum {
+        abort_code,
+        halt_code,
+        jump_c,
+    } action;
+    struct registers regs;
+};
+
+struct do_next run();
+
 void die(char * message);
 
 void print_heap();

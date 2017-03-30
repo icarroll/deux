@@ -584,15 +584,6 @@ void throw_run_error(char * message) {
     longjmp(abort_run, 1);
 }
 
-struct do_next {
-    enum {
-        abort_code,
-        halt_code,
-        jump_c,
-    } action;
-    struct registers regs;
-};
-
 struct do_next do_abort = {abort_code};
 struct do_next do_halt = {halt_code};
 
@@ -662,6 +653,9 @@ struct do_next run() {
             break;
         case SET_LINK:
             regs.link_data = regs.arec_block[arg8_1];
+            break;
+        case SET_LINK_imm24:
+            regs.link_data = tagint(arg24);
             break;
         case READ_FAR:
             regs.arec_block[arg8_1]

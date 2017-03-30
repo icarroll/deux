@@ -18,6 +18,7 @@ extern struct heap * heap0;
 extern void (* pre_collect_hook)();
 extern void (* add_roots_hook)(struct block_header **);
 extern void (* update_roots_hook)();
+extern struct registers regs;
 
 int do_print_block(lua_State * lua);
 int do_write_string(lua_State * lua);
@@ -502,6 +503,63 @@ int do_readline(lua_State * lua) {
     return 1;
 }
 
+int do_execute(lua_State * lua) {
+    luaL_checkudata(lua, 1, "block");
+    struct block_header * header = get_addr_from_ledger(lua, 1);
+    if (header->layout != all_ptr_layout) luaL_argerror(lua, 1, "bad execute");
+
+    void * argument;
+    switch (lua_type(lua, 2)) {
+    case LUA_TNIL:
+        argument = NULL;
+        break;
+    case LUA_TNUMBER:
+        argument = tagint(lua_tointeger(lua, 2));
+        break;
+    case LUA_TLIGHTUSERDATA:
+        argument = lua_touserdata(lua, 2);
+        break;
+    case LUA_TUSERDATA:
+        {
+            struct block_header * header = get_addr_from_ledger(lua, 2);
+            switch (header->note) {
+            case CONS_NOTE:
+                argument = tagconsptr(header->data);
+                break;
+            case SYMB_NOTE:
+                argument = tagsymptr(header->data);
+                break;
+            default:
+                argument = tagblockptr(header->data);
+                break;
+            }
+        }
+        break;
+    default:
+        luaL_argerror(lua, 2, "bad argument");
+    }
+
+    regs.code_block = header->data[0];
+    regs.icount = 0;
+    regs.arec_block = header->data;
+    regs.link_data = argument;
+
+    run();
+
+    void * value = regs.link_data;
+    switch ((uint32_t) value & 0b11) {
+    case 0b11:   // uint32_t
+        lua_pushinteger(lua, untagint(value));
+        break;
+    default:   // pointer
+        if (in_heap(value)) new_block(lua, get_header(untagptr(value)));
+        else lua_pushlightuserdata(lua, value);
+        break;
+    }
+
+    return 1;
+}
+
 int do_print_heap(lua_State * lua) {
     print_heap();
     return 0;
@@ -548,6 +606,9 @@ void setup_globals(lua_State * lua) {
 
     lua_pushcfunction(lua, do_readline);
     lua_setglobal(lua, "readline");
+
+    lua_pushcfunction(lua, do_execute);
+    lua_setglobal(lua, "execute");
 
     int status = luaL_dofile(lua, "mnemonics.lua");
     if (status != LUA_OK) lua_error(lua);

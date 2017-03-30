@@ -1,5 +1,7 @@
 local myname = ...
 
+require "mnemonics"
+
 SYMBOLS = 0
 ENVIRONMENT = 1
 
@@ -423,6 +425,7 @@ function lisp.load(filename, env)
     end
 end
 
+--[[
 if root[ENVIRONMENT] == raw(0) then
     root[ENVIRONMENT] = list(
         cons(raw(0), raw(0)),
@@ -437,3 +440,59 @@ end
 
 lisp.load("lisp.lisp")
 lisp.repl()
+]]
+
+do
+    local code_writer_metatable = {
+        __index={
+            emit=function(t, n) table.insert(t, n) end,
+            create_block=function(t)
+                local mem = alloc_code(#t)
+                for ix = 1,#t do
+                    mem[ix-1] = t[ix]
+                end
+                return mem
+            end
+        }
+    }
+    function code_writer()
+        local code = {}
+        setmetatable(code, code_writer_metatable)
+        return code
+    end
+end
+
+CODE_BLOCK = 0
+ICOUNT = 1
+DYN_PARENT = 2
+STAT_PARENT = 3
+
+function lisp.compile(expr)
+    if type(expr) ~= "number" then error("expected number") end
+
+    local code = code_writer()
+    code:emit(calc_func.SET_LINK_imm24(expr))
+    code:emit(calc_func.RESET_JUMP_AREC(DYN_PARENT))
+    code_block = code:create_block()
+
+    local arec_block = alloc_ptr(3)
+    arec_block[CODE_BLOCK] = code_block
+    arec_block[ICOUNT] = 0
+    arec_block[DYN_PARENT] = raw(0xdeadbeef)
+
+    return arec_block
+end
+
+function deuxit(sub_arec, arg)
+    local cblock = alloc_code(3)
+    cblock[0] = calc_func.GET_AREC_FAR(2, DYN_PARENT)
+    cblock[1] = calc_func.JUMP_AREC(2)
+    cblock[2] = calc_func.HALT()
+
+    local dblock = alloc_ptr(3)
+    dblock[CODE_BLOCK] = cblock
+    dblock[ICOUNT] = 0
+    dblock[2] = sub_arec
+
+    return execute(dblock, arg)
+end
