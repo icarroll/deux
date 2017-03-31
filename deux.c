@@ -687,6 +687,11 @@ struct do_next run() {
                 regs.icount += (int16_t) arg16;
             }
             break;
+        case JUMP_REL_IF_raw_imm16:
+            if ((uint32_t) regs.arec_block[arg8_1]) {
+                regs.icount += (int16_t) arg16;
+            }
+            break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
             //TODO check for jump to nonzerotag pointer
@@ -827,6 +832,12 @@ struct do_next run() {
                 uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 ^ raw3);
+            }
+            break;
+        case XOR_imm8:
+            {
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 ^ arg8_3);
             }
             break;
         case LSHIFT_imm8:

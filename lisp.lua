@@ -495,16 +495,24 @@ do
         if type(expr) == "number" then
             cw:emit(calc_func.SET_14h(st_ix, high14(expr)))
             cw:emit(calc_func.SET_16l(st_ix, low16(expr)))
+        elseif expr == raw(0) then
+            cw:emit(calc_func.CONST_imm16_raw(st_ix, 0))
         elseif expr.note == "cons" then
-            if expr[0] == sym("+1") then
+            if expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], st_ix)
                 cw:emit(calc_func.ADD_imm8(st_ix, st_ix, 1))
-            elseif expr[0] == sym("-1") then
+            elseif expr[0] == sym("dec") then
                 emit_code_for(cw, expr[1][0], st_ix)
                 cw:emit(calc_func.SUB_imm8(st_ix, st_ix, 1))
-            elseif expr[0] == sym("=0?") then
+            elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
                 emit_code_for(cw, expr[1][0], st_ix)
                 cw:emit(calc_func.JUMP_REL_IF_imm16(st_ix, 2))
+                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+                cw:emit(calc_func.JUMP_REL_imm24(1))
+                cw:emit(calc_func.CONST_imm16(st_ix, 0))
+            elseif expr[0] == sym("null?") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                cw:emit(calc_func.JUMP_REL_IF_raw_imm16(st_ix, 2))
                 cw:emit(calc_func.CONST_imm16(st_ix, 1))
                 cw:emit(calc_func.JUMP_REL_imm24(1))
                 cw:emit(calc_func.CONST_imm16(st_ix, 0))
@@ -516,8 +524,24 @@ do
                 emit_code_for(cw, expr[1][0], st_ix)
                 emit_code_for(cw, expr[1][1][0], st_ix+1)
                 cw:emit(calc_func.SUB(st_ix, st_ix, st_ix+1))
-            else
-                error("bad primitive")
+            elseif expr[0] == sym("*") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                emit_code_for(cw, expr[1][1][0], st_ix+1)
+                cw:emit(calc_func.MUL(st_ix, st_ix, st_ix+1))
+            elseif expr[0] == sym("=") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                emit_code_for(cw, expr[1][1][0], st_ix+1)
+                cw:emit(calc_func.SUB(st_ix+1, st_ix, st_ix+1))
+                cw:emit(calc_func.CONST_imm16(st_ix, 0))
+                cw:emit(calc_func.JUMP_REL_IF_imm16(st_ix+1, 1))
+                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+            elseif expr[0] == sym(">") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                emit_code_for(cw, expr[1][1][0], st_ix+1)
+                cw:emit(calc_func.SUB(st_ix, st_ix, st_ix+1))
+                cw:emit(calc_func.RSHIFT_imm8(st_ix, st_ix, 29))
+                cw:emit(calc_func.XOR_imm8(st_ix, st_ix, 1))
+            else error("bad primitive")
             end
         else error("bad compile")
         end
