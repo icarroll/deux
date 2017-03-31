@@ -466,30 +466,84 @@ CODE_BLOCK = 0
 ICOUNT = 1
 DYN_PARENT = 2
 STAT_PARENT = 3
+STACK_ROOT = 4
 
-function lisp.compile(expr)
-    if type(expr) ~= "number" then error("expected number") end
+do
+    local stack_max = 0
 
-    local code = code_writer()
-    code:emit(calc_func.SET_LINK_imm24(expr))
-    code:emit(calc_func.RESET_JUMP_AREC(DYN_PARENT))
-    code_block = code:create_block()
+    function compile(text)
+        expr = parse(text)
 
-    local arec_block = alloc_ptr(3)
-    arec_block[CODE_BLOCK] = code_block
-    arec_block[ICOUNT] = 0
-    arec_block[DYN_PARENT] = raw(0xdeadbeef)
+        local cw = code_writer()
+        emit_code_for(cw, expr, STACK_ROOT)
+        cw:emit(calc_func.SET_LINK(STACK_ROOT))
+        cw:emit(calc_func.RESET_JUMP_AREC(DYN_PARENT))
+        code_block = cw:create_block()
 
-    return arec_block
+        local arec_block = alloc_ptr(stack_max)
+        arec_block.note = "arec"
+        arec_block[CODE_BLOCK] = code_block
+        arec_block[ICOUNT] = 0
+        arec_block[DYN_PARENT] = raw(0xdeadbeef)
+
+        return arec_block
+    end
+
+    function emit_code_for(cw, expr, st_ix)
+        if stack_max < st_ix then stack_max = st_ix end
+
+        if type(expr) == "number" then
+            cw:emit(calc_func.SET_14h(st_ix, high14(expr)))
+            cw:emit(calc_func.SET_16l(st_ix, low16(expr)))
+        elseif expr.note == "cons" then
+            if expr[0] == sym("+1") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                cw:emit(calc_func.ADD_imm8(st_ix, st_ix, 1))
+            elseif expr[0] == sym("-1") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                cw:emit(calc_func.SUB_imm8(st_ix, st_ix, 1))
+            elseif expr[0] == sym("=0?") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                cw:emit(calc_func.JUMP_REL_IF_imm16(st_ix, 2))
+                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+                cw:emit(calc_func.JUMP_REL_imm24(1))
+                cw:emit(calc_func.CONST_imm16(st_ix, 0))
+            elseif expr[0] == sym("+") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                emit_code_for(cw, expr[1][1][0], st_ix+1)
+                cw:emit(calc_func.ADD(st_ix, st_ix, st_ix+1))
+            elseif expr[0] == sym("-") then
+                emit_code_for(cw, expr[1][0], st_ix)
+                emit_code_for(cw, expr[1][1][0], st_ix+1)
+                cw:emit(calc_func.SUB(st_ix, st_ix, st_ix+1))
+            else
+                error("bad primitive")
+            end
+        else error("bad compile")
+        end
+    end
 end
 
-function deuxit(sub_arec, arg)
+function high14(n)
+    return (n >> 16) & 0x3fff
+end
+
+function low16(n)
+    return n & 0xffff
+end
+
+function is_primcall(expr)
+    return expr.note == "cons"
+end
+
+function call_vm(sub_arec, arg)
     local cblock = alloc_code(3)
     cblock[0] = calc_func.GET_AREC_FAR(2, DYN_PARENT)
     cblock[1] = calc_func.JUMP_AREC(2)
     cblock[2] = calc_func.HALT()
 
     local dblock = alloc_ptr(3)
+    dblock.note = "mstr"
     dblock[CODE_BLOCK] = cblock
     dblock[ICOUNT] = 0
     dblock[2] = sub_arec

@@ -414,11 +414,13 @@ int get_root_block(lua_State * lua) {
     return 1;
 }
 
-int do_alloc_noptr(lua_State * lua) {
+int do_alloc_code(lua_State * lua) {
     int size = luaL_checkinteger(lua, 1);
     void * block = allocate_noptr(size * sizeof(void *));
     if (! block) luaL_argerror(lua, 1, "can't allocate");
-    new_block(lua, get_header(block));
+    struct block_header * header = get_header(block);
+    header->note = make_note("code");
+    new_block(lua, header);
     return 1;
 }
 
@@ -595,7 +597,7 @@ void setup_globals(lua_State * lua) {
     get_root_block(lua);
     lua_setglobal(lua, "root");
 
-    lua_pushcfunction(lua, do_alloc_noptr);
+    lua_pushcfunction(lua, do_alloc_code);
     lua_setglobal(lua, "alloc_code");
 
     lua_pushcfunction(lua, do_alloc_noptr_bytes);

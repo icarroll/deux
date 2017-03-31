@@ -99,13 +99,10 @@ void print_block(struct block_header * header) {
 
     switch (header->layout) {
     case no_ptr_layout:
-        /*
-        for (void ** item = (void **) header->data
-             ; item < (void **) ((void *) header->data + header->size)
-             ; item += 1) {
+        if (header->note == make_note("code")) {
+            print_disassembly(header->data, header->size);
         }
-        */
-        print_hexdump(header->data, header->size);
+        else print_hexdump(header->data, header->size);
         break;
     case all_ptr_layout:
         for (int ix=0 ; ix < header->size/sizeof(void *) ; ix+=1) {
@@ -682,6 +679,14 @@ struct do_next run() {
                 regs.icount = arg16;
             }
             break;
+        case JUMP_REL_imm24:
+            regs.icount += ((int32_t) arg24 << 8) >> 8;
+            break;
+        case JUMP_REL_IF_imm16:
+            if (untagint(regs.arec_block[arg8_1])) {
+                regs.icount += (int16_t) arg16;
+            }
+            break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
             //TODO check for jump to nonzerotag pointer
@@ -774,6 +779,19 @@ struct do_next run() {
                 int raw2 = (int) regs.arec_block[arg8_2];
                 int raw3 = (int) regs.arec_block[arg8_3];
                 regs.arec_block[arg8_1] = (void *) (raw2 + raw3);
+            }
+            break;
+        case SUB:
+            {
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
+                regs.arec_block[arg8_1] = tagint(raw2 - raw3);
+            }
+            break;
+        case SUB_imm8:
+            {
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 - arg8_3);
             }
             break;
         case MUL:
