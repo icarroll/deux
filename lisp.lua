@@ -469,18 +469,42 @@ STAT_PARENT = 3
 STACK_ROOT = 4
 
 do
+    local stack_next = 0
     local stack_max = 0
+
+    function init_stack(n)
+        stack_next = n
+        stack_max = n
+    end
+
+    function push()
+        if stack_max < stack_next then stack_max = stack_next end
+        local temp = stack_next
+        stack_next = stack_next + 1
+        return temp
+    end
+
+    function pop(n)
+        n = n or 1
+        stack_next = stack_next - n
+        return stack_next
+    end
+
+    function top()
+        return stack_next - 1
+    end
 
     function compile(text)
         expr = parse(text)
 
+        init_stack(STACK_ROOT)
         local cw = code_writer()
-        emit_code_for(cw, expr, STACK_ROOT)
-        cw:emit(calc_func.SET_LINK(STACK_ROOT))
-        cw:emit(calc_func.RESET_JUMP_AREC(DYN_PARENT))
+        emit_code_for(cw, expr)
+        cw:emit(calc_func.SET_LINK(pop()))
+        cw:emit(calc_func.JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
 
-        local arec_block = alloc_ptr(stack_max)
+        local arec_block = alloc_ptr(stack_max+1)
         arec_block.note = "arec"
         arec_block[CODE_BLOCK] = code_block
         arec_block[ICOUNT] = 0
@@ -489,58 +513,68 @@ do
         return arec_block
     end
 
-    function emit_code_for(cw, expr, st_ix)
-        if stack_max < st_ix then stack_max = st_ix end
-
+    function emit_code_for(cw, expr)
         if type(expr) == "number" then
-            cw:emit(calc_func.SET_14h(st_ix, high14(expr)))
-            cw:emit(calc_func.SET_16l(st_ix, low16(expr)))
+            local ix = push()
+            cw:emit(calc_func.SET_14h(ix, high14(expr)))
+            cw:emit(calc_func.SET_16l(ix, low16(expr)))
         elseif expr == raw(0) then
-            cw:emit(calc_func.CONST_imm16_raw(st_ix, 0))
+            cw:emit(calc_func.CONST_imm16_raw(push(), 0))
         elseif expr.note == "cons" then
             if expr[0] == sym("inc") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                cw:emit(calc_func.ADD_imm8(st_ix, st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                cw:emit(calc_func.ADD_imm8(top(), top(), 1))
             elseif expr[0] == sym("dec") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                cw:emit(calc_func.SUB_imm8(st_ix, st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                cw:emit(calc_func.SUB_imm8(top(), top(), 1))
             elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                cw:emit(calc_func.JUMP_REL_IF_imm16(st_ix, 2))
-                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                cw:emit(calc_func.JUMP_REL_IF_imm16(top(), 2))
+                cw:emit(calc_func.CONST_imm16(top(), 1))
                 cw:emit(calc_func.JUMP_REL_imm24(1))
-                cw:emit(calc_func.CONST_imm16(st_ix, 0))
+                cw:emit(calc_func.CONST_imm16(top(), 0))
             elseif expr[0] == sym("null?") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                cw:emit(calc_func.JUMP_REL_IF_raw_imm16(st_ix, 2))
-                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                cw:emit(calc_func.JUMP_REL_IF_raw_imm16(top(), 2))
+                cw:emit(calc_func.CONST_imm16(top(), 1))
                 cw:emit(calc_func.JUMP_REL_imm24(1))
-                cw:emit(calc_func.CONST_imm16(st_ix, 0))
+                cw:emit(calc_func.CONST_imm16(top(), 0))
             elseif expr[0] == sym("+") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                emit_code_for(cw, expr[1][1][0], st_ix+1)
-                cw:emit(calc_func.ADD(st_ix, st_ix, st_ix+1))
+                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][1][0])
+                local ix2 = pop()
+                local ix1 = pop()
+                cw:emit(calc_func.ADD(push(), ix1, ix2))
             elseif expr[0] == sym("-") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                emit_code_for(cw, expr[1][1][0], st_ix+1)
-                cw:emit(calc_func.SUB(st_ix, st_ix, st_ix+1))
+                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][1][0])
+                local ix2 = pop()
+                local ix1 = pop()
+                cw:emit(calc_func.SUB(push(), ix1, ix2))
             elseif expr[0] == sym("*") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                emit_code_for(cw, expr[1][1][0], st_ix+1)
-                cw:emit(calc_func.MUL(st_ix, st_ix, st_ix+1))
+                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][1][0])
+                local ix2 = pop()
+                local ix1 = pop()
+                cw:emit(calc_func.MUL(push(), ix1, ix2))
             elseif expr[0] == sym("=") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                emit_code_for(cw, expr[1][1][0], st_ix+1)
-                cw:emit(calc_func.SUB(st_ix+1, st_ix, st_ix+1))
-                cw:emit(calc_func.CONST_imm16(st_ix, 0))
-                cw:emit(calc_func.JUMP_REL_IF_imm16(st_ix+1, 1))
-                cw:emit(calc_func.CONST_imm16(st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][1][0])
+                local ix2 = pop()
+                local ix1 = pop()
+                local ix = push()
+                cw:emit(calc_func.SUB(ix2, ix1, ix2))
+                cw:emit(calc_func.CONST_imm16(ix, 0))
+                cw:emit(calc_func.JUMP_REL_IF_imm16(ix2, 1))
+                cw:emit(calc_func.CONST_imm16(ix, 1))
             elseif expr[0] == sym(">") then
-                emit_code_for(cw, expr[1][0], st_ix)
-                emit_code_for(cw, expr[1][1][0], st_ix+1)
-                cw:emit(calc_func.SUB(st_ix, st_ix, st_ix+1))
-                cw:emit(calc_func.RSHIFT_imm8(st_ix, st_ix, 29))
-                cw:emit(calc_func.XOR_imm8(st_ix, st_ix, 1))
+                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][1][0])
+                local ix2 = pop()
+                local ix1 = pop()
+                cw:emit(calc_func.SUB(push(), ix1, ix2))
+                cw:emit(calc_func.RSHIFT_imm8(top(), top(), 29))
+                cw:emit(calc_func.XOR_imm8(top(), top(), 1))
             else error("bad primitive")
             end
         else error("bad compile")
