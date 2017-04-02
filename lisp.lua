@@ -536,7 +536,7 @@ do
                 emit_code_for(cw, expr[1][1][0], symtab)
                 newsymtab = {[expr[1][0]]=top()}
                 setmetatable(newsymtab, {__index=symtab})
-                emit_code_for(cw, expr[1][1][1][0], newsymtab)
+                emit_code_for_list(cw, expr[1][1][1], newsymtab)
             elseif expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.ADD_imm8(top(), top(), 1))
@@ -594,6 +594,18 @@ do
             else error("bad primitive")
             end
         else error("bad compile")
+        end
+    end
+
+    function emit_code_for_list(cw, exprs, symtab)
+        if exprs == raw(0) then
+            emit_code_for(cw, exprs, symtab)
+        else
+            emit_code_for(cw, exprs[0], symtab)
+            if exprs[1] ~= raw(0) then
+                pop()
+                emit_code_for_list(cw, exprs[1], symtab)
+            end
         end
     end
 end
