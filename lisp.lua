@@ -537,6 +537,11 @@ do
                 newsymtab = {[expr[1][0]]=top()}
                 setmetatable(newsymtab, {__index=symtab})
                 emit_code_for_list(cw, expr[1][1][1], newsymtab)
+            elseif expr[0] == sym("new") then
+                emit_code_for(cw, expr[1][1][0], symtab)
+                local ix = top()
+                symtab[expr[1][0]] = ix
+                cw:emit(calc_func.COPY(push(), ix))
             elseif expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.ADD_imm8(top(), top(), 1))
