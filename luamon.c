@@ -273,10 +273,11 @@ int block_newindex(lua_State * lua) {
 }
 
 int block_same(lua_State * lua) {
-    luaL_checkudata(lua, 1, "block");
-    luaL_checkudata(lua, 2, "block");
+    void * block1 = luaL_checkudata(lua, 1, "block");
+    void * block2 = luaL_checkudata(lua, 2, "block");
 
     bool result = get_addr_from_ledger(lua, 1) == get_addr_from_ledger(lua, 2);
+    //if (result && (block1 != block2)) printf("problem: different lua objects, same heap block\n");
     lua_pushboolean(lua, result);
     return 1;
 }

@@ -125,6 +125,15 @@ function sym(name)
     return newsym
 end
 
+do
+    --TODO implement symbols as red-black tree
+    local function search(root, key)
+    end
+
+    function RBTsym(name)
+    end
+end
+
 function list(item, ...)
     if not item then return raw(0)
     else return cons(item, list(...))
@@ -484,9 +493,8 @@ do
         return temp
     end
 
-    function pop(n)
-        n = n or 1
-        stack_next = stack_next - n
+    function pop()
+        stack_next = stack_next - 1
         return stack_next
     end
 
@@ -499,7 +507,8 @@ do
 
         init_stack(STACK_ROOT)
         local cw = code_writer()
-        emit_code_for(cw, expr)
+        local symtab = {}
+        emit_code_for(cw, expr, symtab)
         cw:emit(calc_func.SET_LINK(pop()))
         cw:emit(calc_func.JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
@@ -513,53 +522,60 @@ do
         return arec_block
     end
 
-    function emit_code_for(cw, expr)
+    function emit_code_for(cw, expr, symtab)
         if type(expr) == "number" then
             local ix = push()
             cw:emit(calc_func.SET_14h(ix, high14(expr)))
             cw:emit(calc_func.SET_16l(ix, low16(expr)))
         elseif expr == raw(0) then
             cw:emit(calc_func.CONST_imm16_raw(push(), 0))
+        elseif expr.note == "symb" then
+            cw:emit(calc_func.COPY(push(), symtab[expr]))
         elseif expr.note == "cons" then
-            if expr[0] == sym("inc") then
-                emit_code_for(cw, expr[1][0])
+            if expr[0] == sym("let") then
+                emit_code_for(cw, expr[1][1][0], symtab)
+                newsymtab = {[expr[1][0]]=top()}
+                setmetatable(newsymtab, {__index=symtab})
+                emit_code_for(cw, expr[1][1][1][0], newsymtab)
+            elseif expr[0] == sym("inc") then
+                emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.ADD_imm8(top(), top(), 1))
             elseif expr[0] == sym("dec") then
-                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.SUB_imm8(top(), top(), 1))
             elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
-                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.JUMP_REL_IF_imm16(top(), 2))
                 cw:emit(calc_func.CONST_imm16(top(), 1))
                 cw:emit(calc_func.JUMP_REL_imm24(1))
                 cw:emit(calc_func.CONST_imm16(top(), 0))
             elseif expr[0] == sym("null?") then
-                emit_code_for(cw, expr[1][0])
+                emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(calc_func.JUMP_REL_IF_raw_imm16(top(), 2))
                 cw:emit(calc_func.CONST_imm16(top(), 1))
                 cw:emit(calc_func.JUMP_REL_imm24(1))
                 cw:emit(calc_func.CONST_imm16(top(), 0))
             elseif expr[0] == sym("+") then
-                emit_code_for(cw, expr[1][0])
-                emit_code_for(cw, expr[1][1][0])
+                emit_code_for(cw, expr[1][0], symtab)
+                emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 cw:emit(calc_func.ADD(push(), ix1, ix2))
             elseif expr[0] == sym("-") then
-                emit_code_for(cw, expr[1][0])
-                emit_code_for(cw, expr[1][1][0])
+                emit_code_for(cw, expr[1][0], symtab)
+                emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 cw:emit(calc_func.SUB(push(), ix1, ix2))
             elseif expr[0] == sym("*") then
-                emit_code_for(cw, expr[1][0])
-                emit_code_for(cw, expr[1][1][0])
+                emit_code_for(cw, expr[1][0], symtab)
+                emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 cw:emit(calc_func.MUL(push(), ix1, ix2))
             elseif expr[0] == sym("=") then
-                emit_code_for(cw, expr[1][0])
-                emit_code_for(cw, expr[1][1][0])
+                emit_code_for(cw, expr[1][0], symtab)
+                emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 local ix = push()
@@ -568,8 +584,8 @@ do
                 cw:emit(calc_func.JUMP_REL_IF_imm16(ix2, 1))
                 cw:emit(calc_func.CONST_imm16(ix, 1))
             elseif expr[0] == sym(">") then
-                emit_code_for(cw, expr[1][0])
-                emit_code_for(cw, expr[1][1][0])
+                emit_code_for(cw, expr[1][0], symtab)
+                emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 cw:emit(calc_func.SUB(push(), ix1, ix2))

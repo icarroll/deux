@@ -766,6 +766,9 @@ struct do_next run() {
                 regs.arec_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
+        case COPY:
+            regs.arec_block[arg8_1] = regs.arec_block[arg8_2];
+            break;
         case ADD:
             {
                 uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
