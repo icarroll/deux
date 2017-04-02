@@ -454,18 +454,21 @@ lisp.repl()
 do
     local code_writer_metatable = {
         __index={
-            emit=function(t, n) table.insert(t, n) end,
-            create_block=function(t)
-                local mem = alloc_code(#t)
-                for ix = 1,#t do
-                    mem[ix-1] = t[ix]
+            emit=function(self, inst) table.insert(self, inst) end,
+            label=function(self, name) self.labels[name] = #self end,
+            create_block=function(self)
+                local mem = alloc_code(#self)
+                for ix = 1,#self do
+                    mem[ix-1] = self[ix](self.labels)
                 end
                 return mem
             end
         }
     }
     function code_writer()
-        local code = {}
+        lbl = {}
+        setmetatable(lbl, {__index=function (self, n) return n end})
+        local code = {labels=lbl}
         setmetatable(code, code_writer_metatable)
         return code
     end
@@ -509,8 +512,8 @@ do
         local cw = code_writer()
         local symtab = {}
         emit_code_for(cw, expr, symtab)
-        cw:emit(calc_func.SET_LINK(pop()))
-        cw:emit(calc_func.JUMP_AREC(DYN_PARENT))
+        cw:emit(SET_LINK(pop()))
+        cw:emit(JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
 
         local arec_block = alloc_ptr(stack_max+1)
@@ -525,14 +528,25 @@ do
     function emit_code_for(cw, expr, symtab)
         if type(expr) == "number" then
             local ix = push()
-            cw:emit(calc_func.SET_14h(ix, high14(expr)))
-            cw:emit(calc_func.SET_16l(ix, low16(expr)))
+            cw:emit(SET_14h(ix, high14(expr)))
+            cw:emit(SET_16l(ix, low16(expr)))
         elseif expr == raw(0) then
-            cw:emit(calc_func.CONST_imm16_raw(push(), 0))
+            cw:emit(CONST_imm16_raw(push(), 0))
         elseif expr.note == "symb" then
-            cw:emit(calc_func.COPY(push(), symtab[expr]))
+            cw:emit(COPY(push(), symtab[expr]))
         elseif expr.note == "cons" then
-            if expr[0] == sym("let") then
+            if expr[0] == sym("if") then
+                local true_branch = {}
+                local end_if = {}
+                emit_code_for(cw, expr[1][0], symtab)
+                cw:emit(JUMP_IF_imm16(top(), true_branch))
+                emit_code_for(cw, expr[1][1][1][0], symtab)
+                pop()
+                cw:emit(JUMP_imm24(end_if))
+                cw:label(true_branch)
+                emit_code_for(cw, expr[1][1][0], symtab)
+                cw:label(end_if)
+            elseif expr[0] == sym("let") then
                 emit_code_for(cw, expr[1][1][0], symtab)
                 newsymtab = {[expr[1][0]]=top()}
                 setmetatable(newsymtab, {__index=symtab})
@@ -541,61 +555,61 @@ do
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix = top()
                 symtab[expr[1][0]] = ix
-                cw:emit(calc_func.COPY(push(), ix))
+                cw:emit(COPY(push(), ix))
             elseif expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(calc_func.ADD_imm8(top(), top(), 1))
+                cw:emit(ADD_imm8(top(), top(), 1))
             elseif expr[0] == sym("dec") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(calc_func.SUB_imm8(top(), top(), 1))
+                cw:emit(SUB_imm8(top(), top(), 1))
             elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(calc_func.JUMP_REL_IF_imm16(top(), 2))
-                cw:emit(calc_func.CONST_imm16(top(), 1))
-                cw:emit(calc_func.JUMP_REL_imm24(1))
-                cw:emit(calc_func.CONST_imm16(top(), 0))
+                cw:emit(JUMP_REL_IF_imm16(top(), 2))
+                cw:emit(CONST_imm16(top(), 1))
+                cw:emit(JUMP_REL_imm24(1))
+                cw:emit(CONST_imm16(top(), 0))
             elseif expr[0] == sym("null?") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(calc_func.JUMP_REL_IF_raw_imm16(top(), 2))
-                cw:emit(calc_func.CONST_imm16(top(), 1))
-                cw:emit(calc_func.JUMP_REL_imm24(1))
-                cw:emit(calc_func.CONST_imm16(top(), 0))
+                cw:emit(JUMP_REL_IF_raw_imm16(top(), 2))
+                cw:emit(CONST_imm16(top(), 1))
+                cw:emit(JUMP_REL_imm24(1))
+                cw:emit(CONST_imm16(top(), 0))
             elseif expr[0] == sym("+") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
-                cw:emit(calc_func.ADD(push(), ix1, ix2))
+                cw:emit(ADD(push(), ix1, ix2))
             elseif expr[0] == sym("-") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
-                cw:emit(calc_func.SUB(push(), ix1, ix2))
+                cw:emit(SUB(push(), ix1, ix2))
             elseif expr[0] == sym("*") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
-                cw:emit(calc_func.MUL(push(), ix1, ix2))
+                cw:emit(MUL(push(), ix1, ix2))
             elseif expr[0] == sym("=") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
                 local ix = push()
-                cw:emit(calc_func.SUB(ix2, ix1, ix2))
-                cw:emit(calc_func.CONST_imm16(ix, 0))
-                cw:emit(calc_func.JUMP_REL_IF_imm16(ix2, 1))
-                cw:emit(calc_func.CONST_imm16(ix, 1))
+                cw:emit(SUB(ix2, ix1, ix2))
+                cw:emit(CONST_imm16(ix, 0))
+                cw:emit(JUMP_REL_IF_imm16(ix2, 1))
+                cw:emit(CONST_imm16(ix, 1))
             elseif expr[0] == sym(">") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix2 = pop()
                 local ix1 = pop()
-                cw:emit(calc_func.SUB(push(), ix1, ix2))
-                cw:emit(calc_func.RSHIFT_imm8(top(), top(), 29))
-                cw:emit(calc_func.XOR_imm8(top(), top(), 1))
+                cw:emit(SUB(push(), ix1, ix2))
+                cw:emit(RSHIFT_imm8(top(), top(), 29))
+                cw:emit(XOR_imm8(top(), top(), 1))
             else error("bad primitive")
             end
         else error("bad compile")

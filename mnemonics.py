@@ -135,6 +135,23 @@ lua_body = str.join("", ["  {0}=function ({1}) return {2} << 24 {3} end,\n"
 
 lua_end = ("""}
 
+function map(func, array)
+  local new_array = {}
+  for i,v in ipairs(array) do
+    new_array[i] = func(v)
+  end
+  return new_array
+end
+
+for opcode,calc in pairs(calc_func) do
+  _G[opcode] = function(...)
+    local args = table.pack(...)
+    return function(labels)
+      return calc(table.unpack(map(function (k) return labels[k] end, args)))
+    end
+  end
+end
+
 function calc_op(name)
   return calc_func[name]
 end
