@@ -543,7 +543,7 @@ void print_disassembly(void ** code, int size) {
         unsigned int arg8_2 = (arg24 >> 8) & 0xff;
         unsigned int arg8_3 = arg24 & 0xff;
 
-        printf("%x : 0x%08x - %s ", code+ix, instruction, opcode_to_mnemonic(op));
+        printf("% 4d: %x : 0x%08x - %s ", ix, code+ix, instruction, opcode_to_mnemonic(op));
         switch (arg_pattern(op)) {
         case 0:
             break;
