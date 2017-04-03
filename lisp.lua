@@ -484,24 +484,24 @@ do
     local stack_next = 0
     local stack_max = 0
 
-    function init_stack(n)
+    local function init_stack(n)
         stack_next = n
         stack_max = n
     end
 
-    function push()
+    local function push()
         if stack_max < stack_next then stack_max = stack_next end
         local temp = stack_next
         stack_next = stack_next + 1
         return temp
     end
 
-    function pop()
+    local function pop()
         stack_next = stack_next - 1
         return stack_next
     end
 
-    function top()
+    local function top()
         return stack_next - 1
     end
 
@@ -556,6 +556,10 @@ do
                 local ix = top()
                 symtab[expr[1][0]] = ix
                 cw:emit(COPY(push(), ix))
+            elseif expr[0] == sym("set") then
+                emit_code_for(cw, expr[1][1][0], symtab)
+                local ix = symtab[expr[1][0]]
+                cw:emit(COPY(ix, top()))
             elseif expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(ADD_imm8(top(), top(), 1))
@@ -635,10 +639,6 @@ end
 
 function low16(n)
     return n & 0xffff
-end
-
-function is_primcall(expr)
-    return expr.note == "cons"
 end
 
 function call_vm(sub_arec, arg)
