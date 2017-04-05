@@ -546,11 +546,8 @@ do
                 cw:label(true_branch)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 cw:label(end_if)
-            elseif expr[0] == sym("let") then
-                emit_code_for(cw, expr[1][1][0], symtab)
-                newsymtab = {[expr[1][0]]=top()}
-                setmetatable(newsymtab, {__index=symtab})
-                emit_code_for_list(cw, expr[1][1][1], newsymtab)
+            elseif expr[0] == sym("do") then
+                emit_code_for_list(cw, expr[1], symtab)
             elseif expr[0] == sym("new") then
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix = top()
