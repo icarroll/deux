@@ -92,6 +92,7 @@ struct registers {
     void ** code_block;
     unsigned int icount;
     void ** arec_block;
+    void * link_ptr;
     void * link_data;
 };
 

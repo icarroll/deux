@@ -633,6 +633,12 @@ struct do_next run() {
         case ALLOCATE_ALLPTR_imm16:
             regs.arec_block[arg8_1] = allocate_allptr(arg16);
             break;
+        case SET_NOTE:
+            {
+                struct block_header * header = get_header(regs.arec_block[arg8_1]);
+                header->note = (uint32_t) regs.arec_block[arg8_2];
+            }
+            break;
         case GET_CBLK:
             regs.arec_block[arg8_1] = regs.code_block;
             break;
@@ -645,13 +651,22 @@ struct do_next run() {
         case GET_AREC_FAR:
             untagptrptr(regs.arec_block[arg8_1])[arg8_2] = regs.arec_block;
             break;
-        case GET_LINK:
+        case GET_LINK_PTR:
+            regs.arec_block[arg8_1] = regs.link_ptr;
+            break;
+        case GET_LINK_PTR_FAR:
+            untagptrptr(regs.arec_block[arg8_1])[arg8_2] = regs.link_ptr;
+            break;
+        case SET_LINK_PTR:
+            regs.link_ptr = regs.arec_block[arg8_1];
+            break;
+        case GET_LINK_DATA:
             regs.arec_block[arg8_1] = regs.link_data;
             break;
-        case SET_LINK:
+        case SET_LINK_DATA:
             regs.link_data = regs.arec_block[arg8_1];
             break;
-        case SET_LINK_imm24:
+        case SET_LINK_DATA_imm24:
             regs.link_data = tagint(arg24);
             break;
         case READ_FAR:
@@ -695,6 +710,7 @@ struct do_next run() {
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
             //TODO check for jump to nonzerotag pointer
+            regs.link_ptr = regs.arec_block;
             regs.code_block = regs.arec_block[arg8_1];
             regs.icount = untagint(regs.arec_block[arg8_2]);
             regs.arec_block = regs.arec_block[arg8_3];
@@ -702,6 +718,7 @@ struct do_next run() {
             break;
         case JUMP_FAR_imm8:
             //TODO check for jump to nonzerotag pointer
+            regs.link_ptr = regs.arec_block;
             regs.code_block = regs.arec_block[arg8_1];
             regs.icount = arg8_2;
             regs.arec_block = regs.arec_block[arg8_3];
@@ -712,6 +729,7 @@ struct do_next run() {
             regs.arec_block[0] = regs.code_block;
             regs.arec_block[1] = tagint(regs.icount);
 
+            regs.link_ptr = regs.arec_block;
             regs.arec_block = regs.arec_block[arg8_1];
             regs.code_block = regs.arec_block[0];
             regs.icount = untagint(regs.arec_block[1]);
@@ -723,6 +741,7 @@ struct do_next run() {
             regs.arec_block[0] = regs.code_block;
             regs.arec_block[1] = tagint(0);
 
+            regs.link_ptr = regs.arec_block;
             regs.arec_block = regs.arec_block[arg8_1];
             regs.code_block = regs.arec_block[0];
             regs.icount = untagint(regs.arec_block[1]);
@@ -752,7 +771,7 @@ struct do_next run() {
                 regs.arec_block[arg8_1] = (void *) (high16 | low16);
             }
             break;
-        case SET_14h:
+        case SET_14h: //TODO XXX is this right?
             {
                 int low16 = (uint32_t) regs.arec_block[arg8_1] & 0xffff;
                 int high14 = (arg16 & 0x3fff) << 18;

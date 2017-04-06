@@ -478,7 +478,8 @@ CODE_BLOCK = 0
 ICOUNT = 1
 DYN_PARENT = 2
 STAT_PARENT = 3
-STACK_ROOT = 4
+DYN_TREE = 4
+STACK_ROOT = 5
 
 do
     local stack_next = 0
@@ -505,6 +506,24 @@ do
         return stack_next - 1
     end
 
+    local SUB_AREC = 5
+    local SUB_AREC_SIZE = 6
+    local SUB_CODE_BLOCK = 7
+    local TEMP = 8
+    local SUB_DESC_SIZE = TEMP+1
+    local cw = code_writer()
+    cw:emit(ALLOCATE_ALLPTR(SUB_AREC, SUB_AREC_SIZE))
+    cw:emit(SET_16l_raw(TEMP,  string.byte("a") | (string.byte("r") << 8)))
+    cw:emit(SET_16h_raw(TEMP,  string.byte("e") | (string.byte("c") << 8)))
+    cw:emit(SET_NOTE(SUB_AREC, TEMP))
+    cw:emit(WRITE_FAR(SUB_AREC, CODE_BLOCK, SUB_CODE_BLOCK))
+    cw:emit(WRITE_FAR_imm8(SUB_AREC, ICOUNT, 0))
+    cw:emit(GET_LINK_PTR_FAR(SUB_AREC, DYN_PARENT))
+    cw:emit(WRITE_FAR(SUB_AREC, STAT_PARENT, STAT_PARENT))
+    cw:emit(WRITE_FAR(SUB_AREC, DYN_TREE, 0)) --TODO get from DYN_PARENT
+    cw:emit(RESET_JUMP_AREC(SUB_AREC))
+    local create_subprogram_arec = cw:create_block()
+
     function compile(text)
         expr = parse(text)
 
@@ -512,17 +531,22 @@ do
         local cw = code_writer()
         local symtab = {}
         emit_code_for(cw, expr, symtab)
-        cw:emit(SET_LINK(pop()))
+        cw:emit(SET_LINK_DATA(pop()))
         cw:emit(JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
 
-        local arec_block = alloc_ptr(stack_max+1)
-        arec_block.note = "arec"
-        arec_block[CODE_BLOCK] = code_block
-        arec_block[ICOUNT] = 0
-        arec_block[DYN_PARENT] = raw(0xdeadbeef)
+        local desc_block = alloc_ptr(SUB_DESC_SIZE)
+        desc_block.note = "desc"
+        desc_block[CODE_BLOCK] = create_subprogram_arec
+        desc_block[ICOUNT] = 0
+        desc_block[DYN_PARENT] = raw(0xdeadbeef) --TODO unused at present
+        desc_block[STAT_PARENT] = raw(0xdeadbeef) --TODO compiler fills this in?
+        desc_block[DYN_TREE] = raw(0)
+        desc_block[SUB_AREC] = raw(0xdeadbeef)
+        desc_block[SUB_AREC_SIZE] = stack_max + 1
+        desc_block[SUB_CODE_BLOCK] = code_block
 
-        return arec_block
+        return desc_block
     end
 
     function emit_code_for(cw, expr, symtab)
@@ -639,10 +663,9 @@ function low16(n)
 end
 
 function call_vm(sub_arec, arg)
-    local cblock = alloc_code(3)
-    cblock[0] = calc_func.GET_AREC_FAR(2, DYN_PARENT)
-    cblock[1] = calc_func.JUMP_AREC(2)
-    cblock[2] = calc_func.HALT()
+    local cblock = alloc_code(2)
+    cblock[0] = calc_func.JUMP_AREC(2)
+    cblock[1] = calc_func.HALT()
 
     local dblock = alloc_ptr(3)
     dblock.note = "mstr"
