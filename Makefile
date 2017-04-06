@@ -1,6 +1,7 @@
 CC = gcc
 OUTPUT_OPTION = -MMD -MP -o $@
-CFLAGS = -std=gnu11 -O
+CFLAGS = -std=gnu11 -O -m32
+LDFLAGS = -m32
 LDLIBS = -lreadline -llua -lm -ldl
 
 SRC = $(wildcard *.c)
