@@ -435,6 +435,7 @@ function lisp.load(filename, env)
 end
 
 --[[
+-- Populate environment and run interpreter
 if root[ENVIRONMENT] == raw(0) then
     root[ENVIRONMENT] = list(
         cons(raw(0), raw(0)),
@@ -451,178 +452,256 @@ lisp.load("lisp.lisp")
 lisp.repl()
 ]]
 
-do
-    local code_writer_metatable = {
-        __index={
-            emit=function(self, inst) table.insert(self, inst) end,
-            label=function(self, name) self.labels[name] = #self end,
-            create_block=function(self)
-                local mem = alloc_code(#self)
-                for ix = 1,#self do
-                    mem[ix-1] = self[ix](self.labels)
-                end
-                return mem
-            end
-        }
-    }
-    function code_writer()
-        lbl = {}
-        setmetatable(lbl, {__index=function (self, n) return n end})
-        local code = {labels=lbl}
-        setmetatable(code, code_writer_metatable)
-        return code
-    end
-end
-
 CODE_BLOCK = 0
 ICOUNT = 1
 DYN_PARENT = 2
 STAT_PARENT = 3
-DYN_TREE = 4
-STACK_ROOT = 5
+DESCRIPTOR = 4
+DYN_TREE = 5
+LOCALS = 6
+
+function code_writer()
+    local cw = {
+        labels={},
+        stack_next=0,
+        stack_max=0,
+        locals_count=0,
+        localvars_start=LOCALS
+    }
+
+    function cw:push()
+        if self.stack_max < self.stack_next then
+            self.stack_max = self.stack_next
+        end
+        self.stack_next = self.stack_next + 1
+        return {"stack", self.stack_next - 1}
+    end
+
+    function cw:pop()
+        self.stack_next = self.stack_next - 1
+        return {"stack", self.stack_next}
+    end
+
+    function cw:top()
+        return {"stack", self.stack_next - 1}
+    end
+
+    function cw:localvar()
+        self.locals_count = self.locals_count + 1
+        return {"localvar", self.locals_count - 1}
+    end
+
+    function cw:emit(inst)
+        table.insert(self, inst)
+    end
+
+    function cw:label(obj)
+        self.labels[obj] = #self
+    end
+
+    function cw:create_block()
+        local mem = alloc_code(#self)
+        for ix = 1,#self do
+            local items = self[ix]
+            local op = items[1]
+            local raw_args = table.move(items, 2, #items, 1, {})
+            args = {}
+            for jx = 1,#raw_args do
+                local item = raw_args[jx]
+                if type(item) == "table" then
+                    if self.labels[item] then
+                        item = self.labels[item]
+                    elseif item[1] == "localvar" then
+                        item = item[2] + self.localvars_start
+                    elseif item[1] == "stack" then
+                        item = item[2] + self.localvars_start
+                               + self.locals_count
+                    end
+                end
+                table.insert(args, item)
+            end
+            mem[ix-1] = calc_func[op](table.unpack(args))
+        end
+        return mem
+    end
+
+    return cw
+end
+
+function high14(n)
+    return (n >> 16) & 0x3fff
+end
+
+function low16(n)
+    return n & 0xffff
+end
+
+function high16(n)
+    return (n >> 16) & 0xffff
+end
+
+function make_note(text)
+    return string.byte(text:sub(1,1))
+           | (string.byte(text:sub(2,2)) << 8)
+           | (string.byte(text:sub(3,3)) << 16)
+           | (string.byte(text:sub(4,4)) << 24)
+end
 
 do
-    local stack_next = 0
-    local stack_max = 0
-
-    local function init_stack(n)
-        stack_next = n
-        stack_max = n
-    end
-
-    local function push()
-        if stack_max < stack_next then stack_max = stack_next end
-        local temp = stack_next
-        stack_next = stack_next + 1
-        return temp
-    end
-
-    local function pop()
-        stack_next = stack_next - 1
-        return stack_next
-    end
-
-    local function top()
-        return stack_next - 1
-    end
-
-    local SUB_AREC = 5
-    local SUB_AREC_SIZE = 6
-    local SUB_CODE_BLOCK = 7
-    local TEMP = 8
+    -- Shared code to create an activation record
+    local SUB_AREC = 6   -- Overlaps with LOCALS
+    local SUB_AREC_SIZE = 7
+    local SUB_CODE_BLOCK = 8
+    local TEMP = 9
     local SUB_DESC_SIZE = TEMP+1
     local cw = code_writer()
     cw:emit(ALLOCATE_ALLPTR(SUB_AREC, SUB_AREC_SIZE))
-    cw:emit(SET_16l_raw(TEMP,  string.byte("a") | (string.byte("r") << 8)))
-    cw:emit(SET_16h_raw(TEMP,  string.byte("e") | (string.byte("c") << 8)))
+    local note = make_note("arec")
+    cw:emit(SET_16l_raw(TEMP,  low16(note)))
+    cw:emit(SET_16h_raw(TEMP,  high16(note)))
     cw:emit(SET_NOTE(SUB_AREC, TEMP))
     cw:emit(WRITE_FAR(SUB_AREC, CODE_BLOCK, SUB_CODE_BLOCK))
     cw:emit(WRITE_FAR_imm8(SUB_AREC, ICOUNT, 0))
     cw:emit(GET_LINK_PTR_FAR(SUB_AREC, DYN_PARENT))
     cw:emit(WRITE_FAR(SUB_AREC, STAT_PARENT, STAT_PARENT))
+    cw:emit(GET_AREC_FAR(SUB_AREC, DESCRIPTOR))
     cw:emit(WRITE_FAR(SUB_AREC, DYN_TREE, 0)) --TODO get from DYN_PARENT
     cw:emit(RESET_JUMP_AREC(SUB_AREC))
-    local create_subprogram_arec = cw:create_block()
+    local create_sub_arec = cw:create_block()
 
-    function compile(text)
+    function compile(text, stat_env, formals)
         expr = parse(text)
 
-        init_stack(STACK_ROOT)
         local cw = code_writer()
+
         local symtab = {}
+        if stat_env then
+            --TODO take care of static environment
+        end
+
+        if formals then
+            --TODO emit code for formals
+        end
+
         emit_code_for(cw, expr, symtab)
-        cw:emit(SET_LINK_DATA(pop()))
+        cw:emit(SET_LINK_DATA(cw:pop()))
         cw:emit(JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
 
         local desc_block = alloc_ptr(SUB_DESC_SIZE)
         desc_block.note = "desc"
-        desc_block[CODE_BLOCK] = create_subprogram_arec
+        desc_block[CODE_BLOCK] = create_sub_arec
         desc_block[ICOUNT] = 0
-        desc_block[DYN_PARENT] = raw(0xdeadbeef) --TODO unused at present
-        desc_block[STAT_PARENT] = raw(0xdeadbeef) --TODO compiler fills this in?
+        desc_block[DYN_PARENT] = raw(0xdeadbeef)   -- Currently unused
+        desc_block[STAT_PARENT] = raw(0xdeadbeef)   -- Fixed up by caller
+        desc_block[DESCRIPTOR] = raw(0xdeadbeef)   -- Currently unused
         desc_block[DYN_TREE] = raw(0)
-        desc_block[SUB_AREC] = raw(0xdeadbeef)
-        desc_block[SUB_AREC_SIZE] = stack_max + 1
+        desc_block[SUB_AREC] = raw(0xdeadbeef)   -- Set by create_sub_arec
+        desc_block[SUB_AREC_SIZE] = cw.localvars_start + cw.locals_count
+                                    + cw.stack_max + 1
         desc_block[SUB_CODE_BLOCK] = code_block
+
+        --TODO fix up static parent of child subs
 
         return desc_block
     end
 
     function emit_code_for(cw, expr, symtab)
         if type(expr) == "number" then
-            local ix = push()
+            local ix = cw:push()
             cw:emit(SET_14h(ix, high14(expr)))
             cw:emit(SET_16l(ix, low16(expr)))
         elseif expr == raw(0) then
-            cw:emit(CONST_imm16_raw(push(), 0))
+            cw:emit(CONST_imm16_raw(cw:push(), 0))
         elseif expr.note == "symb" then
-            cw:emit(COPY(push(), symtab[expr]))
+            --TODO implement nonlocal variables
+            cw:emit(COPY(cw:push(), symtab[expr]))
         elseif expr.note == "cons" then
             if expr[0] == sym("if") then
                 local true_branch = {}
                 local end_if = {}
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_IF_imm16(top(), true_branch))
+                cw:emit(JUMP_IF_imm16(cw:top(), true_branch))
                 emit_code_for(cw, expr[1][1][1][0], symtab)
-                pop()
+                cw:pop()
                 cw:emit(JUMP_imm24(end_if))
                 cw:label(true_branch)
                 emit_code_for(cw, expr[1][1][0], symtab)
                 cw:label(end_if)
+            elseif expr[0] == "cons" then
+                cw:emit(ALLOC_ALLPTR(cw:push(), 2))
+                local cons = cw:top()
+                local note = make_note("cons")
+                cw:emit(SET_16l_raw(cw:push(),  low16(note)))
+                cw:emit(SET_16h_raw(cw:top(),  high16(note)))
+                cw:emit(SET_NOTE(SUB_AREC, cw:pop()))
+                emit_code_for(cw, expr[1][0], symtab)
+                cw:emit(WRITE_FAR(cons, 0, cw:pop()))
+                emit_code_for(cw, expr[1][1][0], symtab)
+                cw:emit(WRITE_FAR(cons, 1, cw:pop()))
+            elseif expr[0] == "head" then
+                cw:emit(READ_FAR(cw:top(), 0, cw:top()))
+            elseif expr[0] == "tail" then
+                cw:emit(READ_FAR(cw:top(), 1, cw:top()))
             elseif expr[0] == sym("do") then
                 emit_code_for_list(cw, expr[1], symtab)
+                --[[
+            elseif expr[0] == sym("fn") then
+                local fn_desc = compile(expr[1][1], symtab, expr[1][0])
+                --TODO store fn desc in self desc
+                cw:emit(READ_FAR(cw:push(), DESCRIPTOR, WHUT))
+                ]]
             elseif expr[0] == sym("new") then
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix = top()
+                local ix = cw:localvar()
                 symtab[expr[1][0]] = ix
-                cw:emit(COPY(push(), ix))
+                cw:emit(COPY(ix, cw:top()))
             elseif expr[0] == sym("set") then
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix = symtab[expr[1][0]]
-                cw:emit(COPY(ix, top()))
+                cw:emit(COPY(ix, cw:top()))
             elseif expr[0] == sym("inc") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(ADD_imm8(top(), top(), 1))
+                cw:emit(ADD_imm8(cw:top(), cw:top(), 1))
             elseif expr[0] == sym("dec") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(SUB_imm8(top(), top(), 1))
+                cw:emit(SUB_imm8(cw:top(), cw:top(), 1))
             elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_REL_IF_imm16(top(), 2))
-                cw:emit(CONST_imm16(top(), 1))
+                cw:emit(JUMP_REL_IF_imm16(cw:top(), 2))
+                cw:emit(CONST_imm16(cw:top(), 1))
                 cw:emit(JUMP_REL_imm24(1))
-                cw:emit(CONST_imm16(top(), 0))
+                cw:emit(CONST_imm16(cw:top(), 0))
             elseif expr[0] == sym("null?") then
                 emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_REL_IF_raw_imm16(top(), 2))
-                cw:emit(CONST_imm16(top(), 1))
+                cw:emit(JUMP_REL_IF_raw_imm16(cw:top(), 2))
+                cw:emit(CONST_imm16(cw:top(), 1))
                 cw:emit(JUMP_REL_imm24(1))
-                cw:emit(CONST_imm16(top(), 0))
+                cw:emit(CONST_imm16(cw:top(), 0))
             elseif expr[0] == sym("+") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = pop()
-                local ix1 = pop()
-                cw:emit(ADD(push(), ix1, ix2))
+                local ix2 = cw:pop()
+                local ix1 = cw:pop()
+                cw:emit(ADD(cw:push(), ix1, ix2))
             elseif expr[0] == sym("-") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = pop()
-                local ix1 = pop()
-                cw:emit(SUB(push(), ix1, ix2))
+                local ix2 = cw:pop()
+                local ix1 = cw:pop()
+                cw:emit(SUB(cw:push(), ix1, ix2))
             elseif expr[0] == sym("*") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = pop()
-                local ix1 = pop()
-                cw:emit(MUL(push(), ix1, ix2))
+                local ix2 = cw:pop()
+                local ix1 = cw:pop()
+                cw:emit(MUL(cw:push(), ix1, ix2))
             elseif expr[0] == sym("=") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = pop()
-                local ix1 = pop()
-                local ix = push()
+                local ix2 = cw:pop()
+                local ix1 = cw:pop()
+                local ix = cw:push()
                 cw:emit(SUB(ix2, ix1, ix2))
                 cw:emit(CONST_imm16(ix, 0))
                 cw:emit(JUMP_REL_IF_imm16(ix2, 1))
@@ -630,11 +709,11 @@ do
             elseif expr[0] == sym(">") then
                 emit_code_for(cw, expr[1][0], symtab)
                 emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = pop()
-                local ix1 = pop()
-                cw:emit(SUB(push(), ix1, ix2))
-                cw:emit(RSHIFT_imm8(top(), top(), 29))
-                cw:emit(XOR_imm8(top(), top(), 1))
+                local ix2 = cw:pop()
+                local ix1 = cw:pop()
+                cw:emit(SUB(cw:push(), ix1, ix2))
+                cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
+                cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
             else error("bad primitive")
             end
         else error("bad compile")
@@ -647,19 +726,11 @@ do
         else
             emit_code_for(cw, exprs[0], symtab)
             if exprs[1] ~= raw(0) then
-                pop()
+                cw:pop()
                 emit_code_for_list(cw, exprs[1], symtab)
             end
         end
     end
-end
-
-function high14(n)
-    return (n >> 16) & 0x3fff
-end
-
-function low16(n)
-    return n & 0xffff
 end
 
 function call_vm(sub_arec, arg)

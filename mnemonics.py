@@ -149,10 +149,7 @@ end
 
 for opcode,calc in pairs(calc_func) do
   _G[opcode] = function(...)
-    local args = table.pack(...)
-    return function(labels)
-      return calc(table.unpack(map(function (k) return labels[k] end, args)))
-    end
+    return {opcode, ...}
   end
 end
 
