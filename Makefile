@@ -1,8 +1,13 @@
 CC = gcc
 OUTPUT_OPTION = -MMD -MP -o $@
-CFLAGS = -std=gnu11 -O -m32
-LDFLAGS = -m32
+CFLAGS = -std=gnu11 -O
 LDLIBS = -lreadline -llua -lm -ldl
+
+LBITS := $(shell getconf LONG_BIT)
+ifeq ($(LBITS),64)
+    CFLAGS += -m32
+    LDFLAGS += -m32
+endif
 
 SRC = $(wildcard *.c)
 OBJ = $(SRC:.c=.o)
