@@ -15,6 +15,8 @@
 #include "deux.h"
 #include "mnemonics.h"
 
+#undef TRACE
+
 void hurl() {
     printf("not ok\n");
     fflush(0);
@@ -570,6 +572,38 @@ void print_disassembly(void ** code, int size) {
     }
 }
 
+void print_disassembly_one(uint32_t instruction) {
+    enum opcodes op = instruction >> 24;
+    unsigned int arg24 = instruction & 0xffffff;
+    unsigned int arg8_1 = arg24 >> 16;
+    unsigned int arg16 = arg24 & 0xffff;
+    unsigned int arg8_2 = (arg24 >> 8) & 0xff;
+    unsigned int arg8_3 = arg24 & 0xff;
+
+    printf("%s ", opcode_to_mnemonic(op));
+    switch (arg_pattern(op)) {
+    case 0:
+        break;
+    case 3:
+        printf("0x%06x", arg24);
+        break;
+    case 1:
+        printf("0x%02x", arg8_1);
+        break;
+    case 11:
+        printf("0x%02x 0x%02x", arg8_1, arg8_2);
+        break;
+    case 12:
+        printf("0x%02x 0x%04x", arg8_1, arg16);
+        break;
+    case 111:
+        printf("0x%02x 0x%02x 0x%02x", arg8_1, arg8_2, arg8_3);
+        break;
+    default:
+        die("bad arg pattern");
+    }
+}
+
 // end heap display
 
 // virtual machine
@@ -600,15 +634,22 @@ struct do_next run() {
 
     unsigned int end = get_header(regs.code_block)->size / sizeof(void *);
     while (regs.icount < end) {
-        unsigned int instruction = (unsigned int) regs.code_block[regs.icount];
+        uint32_t instruction = (unsigned int) regs.code_block[regs.icount];
+#ifdef TRACE
+        printf("arec=%08x code=%08x[%d] - ",
+               regs.arec_block, regs.code_block, regs.icount);
+        print_disassembly_one(instruction);
+        putchar('\n');
+#endif //TRACE
+
         regs.icount += 1;
 
         enum opcodes op = instruction >> 24;
-        unsigned int arg24 = instruction & 0xffffff;
-        unsigned int arg8_1 = arg24 >> 16;
-        unsigned int arg16 = arg24 & 0xffff;
-        unsigned int arg8_2 = (arg24 >> 8) & 0xff;
-        unsigned int arg8_3 = arg24 & 0xff;
+        uint32_t arg24 = instruction & 0xffffff;
+        uint32_t arg8_1 = arg24 >> 16;
+        uint32_t arg16 = arg24 & 0xffff;
+        uint32_t arg8_2 = (arg24 >> 8) & 0xff;
+        uint32_t arg8_3 = arg24 & 0xff;
 
         switch (op) {
         case ABORT:
@@ -618,20 +659,30 @@ struct do_next run() {
         case ALLOCATE_NOPTR:
             {
                 int size = untagint(regs.arec_block[arg8_2]);
-                regs.arec_block[arg8_1] = allocate_noptr(size);
+                regs.arec_block[arg8_1] = allocate_noptr(size * sizeof(void *));
             }
             break;
         case ALLOCATE_NOPTR_imm16:
-            regs.arec_block[arg8_1] = allocate_noptr(arg16);
+            regs.arec_block[arg8_1] = allocate_noptr(arg16 * sizeof(void *));
             break;
         case ALLOCATE_ALLPTR:
             {
                 int size = untagint(regs.arec_block[arg8_2]);
-                regs.arec_block[arg8_1] = allocate_allptr(size);
+                regs.arec_block[arg8_1] = allocate_allptr(size * sizeof(void *));
             }
             break;
         case ALLOCATE_ALLPTR_imm16:
-            regs.arec_block[arg8_1] = allocate_allptr(arg16);
+            regs.arec_block[arg8_1] = allocate_allptr(arg16 * sizeof(void *));
+            break;
+        case COPY_BLOCK:
+            {
+                void * old_block = untagptr(regs.arec_block[arg8_2]);
+                struct block_header * old_header = get_header(old_block);
+                void * new_block = allocate(old_header->size, old_header->layout);
+                struct block_header * new_header = get_header(new_block);
+                memmove(new_header, old_header, hdr_sz + old_header->size);
+                regs.arec_block[arg8_1] = tagptr(new_block, getptrtag(old_block));
+            }
             break;
         case SET_NOTE:
             {

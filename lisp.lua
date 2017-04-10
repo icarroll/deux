@@ -466,7 +466,9 @@ function code_writer()
         stack_next=0,
         stack_max=0,
         locals_count=0,
-        localvars_start=LOCALS
+        localvars_start=LOCALS,
+        desc_values={},
+        desc_values_start=nil
     }
 
     function cw:push()
@@ -491,6 +493,11 @@ function code_writer()
         return {"localvar", self.locals_count - 1}
     end
 
+    function cw:desc_value(value)
+        table.insert(self.desc_values, value)
+        return {"desc_value", #self.desc_values - 1}
+    end
+
     function cw:emit(inst)
         table.insert(self, inst)
     end
@@ -513,6 +520,8 @@ function code_writer()
                         item = self.labels[item]
                     elseif item[1] == "localvar" then
                         item = item[2] + self.localvars_start
+                    elseif item[1] == "desc_value" then
+                        item = item[2] + self.desc_values_start
                     elseif item[1] == "stack" then
                         item = item[2] + self.localvars_start
                                + self.locals_count
@@ -554,6 +563,7 @@ do
     local SUB_CODE_BLOCK = 8
     local TEMP = 9
     local SUB_DESC_SIZE = TEMP+1
+
     local cw = code_writer()
     cw:emit(ALLOCATE_ALLPTR(SUB_AREC, SUB_AREC_SIZE))
     local note = make_note("arec")
@@ -569,10 +579,9 @@ do
     cw:emit(RESET_JUMP_AREC(SUB_AREC))
     local create_sub_arec = cw:create_block()
 
-    function compile(text, stat_env, formals)
-        expr = parse(text)
-
+    function compile(expr, stat_env, formals)
         local cw = code_writer()
+        cw.desc_values_start = SUB_DESC_SIZE
 
         local symtab = {}
         if stat_env then
@@ -588,7 +597,7 @@ do
         cw:emit(JUMP_AREC(DYN_PARENT))
         code_block = cw:create_block()
 
-        local desc_block = alloc_ptr(SUB_DESC_SIZE)
+        local desc_block = alloc_ptr(SUB_DESC_SIZE + #cw.desc_values)
         desc_block.note = "desc"
         desc_block[CODE_BLOCK] = create_sub_arec
         desc_block[ICOUNT] = 0
@@ -601,7 +610,9 @@ do
                                     + cw.stack_max + 1
         desc_block[SUB_CODE_BLOCK] = code_block
 
-        --TODO fix up static parent of child subs
+        for ix = 1, #cw.desc_values do
+            desc_block[cw.desc_values_start + ix-1] = cw.desc_values[ix]
+        end
 
         return desc_block
     end
@@ -629,7 +640,7 @@ do
                 emit_code_for(cw, expr[1][1][0], symtab)
                 cw:label(end_if)
             elseif expr[0] == "cons" then
-                cw:emit(ALLOC_ALLPTR(cw:push(), 2))
+                cw:emit(ALLOCATE_ALLPTR(cw:push(), 2))
                 local cons = cw:top()
                 local note = make_note("cons")
                 cw:emit(SET_16l_raw(cw:push(),  low16(note)))
@@ -645,12 +656,12 @@ do
                 cw:emit(READ_FAR(cw:top(), 1, cw:top()))
             elseif expr[0] == sym("do") then
                 emit_code_for_list(cw, expr[1], symtab)
-                --[[
             elseif expr[0] == sym("fn") then
-                local fn_desc = compile(expr[1][1], symtab, expr[1][0])
-                --TODO store fn desc in self desc
-                cw:emit(READ_FAR(cw:push(), DESCRIPTOR, WHUT))
-                ]]
+                local desc_template = compile(expr[1][1][0], symtab, expr[1][0])
+                local ix = cw:desc_value(desc_template)
+                cw:emit(READ_FAR(cw:push(), DESCRIPTOR, ix))
+                cw:emit(COPY_BLOCK(cw:top(), cw:top()))
+                cw:emit(GET_AREC_FAR(cw:top(), STAT_PARENT))
             elseif expr[0] == sym("new") then
                 emit_code_for(cw, expr[1][1][0], symtab)
                 local ix = cw:localvar()
@@ -714,7 +725,25 @@ do
                 cw:emit(SUB(cw:push(), ix1, ix2))
                 cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
                 cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
-            else error("bad primitive")
+            else
+                emit_code_for(cw, expr[0], symtab)
+                local args = expr[1]
+                if args == raw(0) then
+                    emit_code_for(cw, args, symtab)
+                else
+                    --TODO evaluate and cons up actual args
+                    while args ~= raw(0) do
+                        cw:emit(ALLOCATE_ALLPTR(cw:push(), 2))
+                        local cons = cw:top()
+                        local note = make_note("cons")
+                        cw:emit(SET_16l_raw(cw:push(),  low16(note)))
+                        cw:emit(SET_16h_raw(cw:top(),  high16(note)))
+                        cw:emit(SET_NOTE(SUB_AREC, cw:pop()))
+                    end
+                end
+                cw:emit(SET_LINK_DATA(cw:pop()))
+                cw:emit(JUMP_AREC(cw:pop()))
+                cw:emit(GET_LINK_DATA(cw:push()))
             end
         else error("bad compile")
         end
