@@ -518,7 +518,7 @@ function code_writer()
                 if type(item) == "table" then
                     if self.labels[item] then
                         item = self.labels[item]
-                    elseif item[1] == "localvar" then
+                    elseif item[1] == "localvar" or item[1] == "nonlocalvar" then
                         item = item[2] + self.localvars_start
                     elseif item[1] == "desc_value" then
                         item = item[2] + self.desc_values_start
@@ -585,7 +585,21 @@ do
 
         local symtab = {}
         if stat_env then
-            --TODO take care of static environment
+            local mt = {}
+            function mt.__index(t, ix)
+                local temp = stat_env[ix]
+                if temp then
+                    local kind, ix, count = table.unpack(temp)
+                    if kind == "localvar" then
+                        return {"nonlocalvar", ix, 1}
+                    elseif kind == "nonlocalvar" then
+                        return {"nonlocalvar", ix, count+1}
+                    else error("bad variable location")
+                    end
+                else return nil
+                end
+            end
+            setmetatable(symtab, mt)
         end
 
         if formals then
@@ -625,8 +639,20 @@ do
         elseif expr == raw(0) then
             cw:emit(CONST_imm16_raw(cw:push(), 0))
         elseif expr.note == "symb" then
-            --TODO implement nonlocal variables
-            cw:emit(COPY(cw:push(), symtab[expr]))
+            if symtab[expr] then
+                local kind, ix, count = table.unpack(symtab[expr])
+                if kind == "localvar" then
+                    cw:emit(COPY(cw:push(), symtab[expr]))
+                elseif kind == "nonlocalvar" then
+                    cw:emit(COPY(cw:push(), STAT_PARENT))
+                    for n = 1, count-1 do
+                        cw:emit(READ_FAR(cw:top(), cw:top(), STAT_PARENT))
+                    end
+                    cw:emit(READ_FAR(cw:top(), cw:top(), symtab[expr]))
+                else error("bad variable location")
+                end
+            else error("undefined variable")
+            end
         elseif expr.note == "cons" then
             if expr[0] == sym("if") then
                 local true_branch = {}
@@ -726,6 +752,7 @@ do
                 cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
                 cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
             else
+                -- Function call
                 emit_code_for(cw, expr[0], symtab)
                 local args = expr[1]
                 if args == raw(0) then
@@ -774,4 +801,8 @@ function call_vm(sub_arec, arg)
     dblock[2] = sub_arec
 
     return execute(dblock, arg)
+end
+
+function pcomp(...)
+    return compile(parse(...))
 end
