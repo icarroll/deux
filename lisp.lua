@@ -602,8 +602,10 @@ do
             setmetatable(symtab, mt)
         end
 
-        if formals then
-            --TODO emit code for formals
+        if formals and formals ~= raw(0) then
+            cw:emit(GET_LINK_DATA(cw:push()))
+            emit_code_for_formals(cw, formals, symtab)
+            cw:pop()
         end
 
         emit_code_for(cw, expr, symtab)
@@ -666,12 +668,15 @@ do
                 emit_code_for(cw, expr[1][1][0], symtab)
                 cw:label(end_if)
             elseif expr[0] == "cons" then
+                --[[
                 cw:emit(ALLOCATE_ALLPTR(cw:push(), 2))
                 local cons = cw:top()
                 local note = make_note("cons")
                 cw:emit(SET_16l_raw(cw:push(),  low16(note)))
                 cw:emit(SET_16h_raw(cw:top(),  high16(note)))
                 cw:emit(SET_NOTE(SUB_AREC, cw:pop()))
+                ]]
+                emit_code_for_cons(cw)
                 emit_code_for(cw, expr[1][0], symtab)
                 cw:emit(WRITE_FAR(cons, 0, cw:pop()))
                 emit_code_for(cw, expr[1][1][0], symtab)
@@ -754,19 +759,14 @@ do
             else
                 -- Function call
                 emit_code_for(cw, expr[0], symtab)
-                local args = expr[1]
-                if args == raw(0) then
-                    emit_code_for(cw, args, symtab)
-                else
-                    --TODO evaluate and cons up actual args
-                    while args ~= raw(0) do
-                        cw:emit(ALLOCATE_ALLPTR(cw:push(), 2))
-                        local cons = cw:top()
-                        local note = make_note("cons")
-                        cw:emit(SET_16l_raw(cw:push(),  low16(note)))
-                        cw:emit(SET_16h_raw(cw:top(),  high16(note)))
-                        cw:emit(SET_NOTE(SUB_AREC, cw:pop()))
-                    end
+                local actuals = expr[1]
+                if getmetatable(actuals) and actuals.note == "cons" then
+                    emit_code_for_cons(cw)   -- Emit head cons of list
+                    local cons_ix = cw:top()
+                    cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
+                    emit_code_for_actuals_list(cw, actuals, symtab)
+                    cw:pop()   -- Pop last cons of list
+                else emit_code_for(cw, actuals, symtab)
                 end
                 cw:emit(SET_LINK_DATA(cw:pop()))
                 cw:emit(JUMP_AREC(cw:pop()))
@@ -786,6 +786,51 @@ do
                 emit_code_for_list(cw, exprs[1], symtab)
             end
         end
+    end
+
+    function emit_code_for_formals(cw, formals, symtab)
+        if formals == raw(0) then return
+        elseif formals.note == "symb" then
+            local ix = cw:localvar()
+            symtab[formals] = ix
+            cw:emit(COPY(ix, cw:top()))
+        elseif formals.note == "cons" then
+            local cons = cw:top()
+            local tail = cw:top()
+            local head = cw:push()
+            cw:emit(READ_FAR(head, cons, 0))
+            cw:emit(READ_FAR(tail, cons, 1))
+            emit_code_for_formals(cw, formals[0], symtab)
+            cw:pop()
+            emit_code_for_formals(cw, formals[1], symtab)
+        else error("bad formals")
+        end
+    end
+
+    function emit_code_for_actuals_list(cw, actuals, symtab)
+        local cons_ix = cw:top()
+        emit_code_for(cw, actuals[0], symtab)
+        cw:emit(WRITE_FAR(cons_ix, 0, cw:pop()))
+
+        if getmetatable(actuals[1]) and actuals[1].note == "cons" then
+            emit_code_for_cons(cw)
+            cw:emit(WRITE_FAR(cons_ix, 1, cw:top()))
+            cw:emit(COPY(cons_ix, cw:pop()))
+            emit_code_for_actuals_list(cw, actuals[1], symtab)
+        else
+            local cons_ix = cw:top()
+            emit_code_for(cw, actuals[1], symtab)
+            cw:emit(WRITE_FAR(cons_ix, 1, cw:pop()))
+        end
+    end
+
+    function emit_code_for_cons(cw)
+        cw:emit(ALLOCATE_ALLPTR_imm16(cw:push(), 2))
+        local cons = cw:top()
+        local note = make_note("cons")
+        cw:emit(SET_16l_raw(cw:push(),  low16(note)))
+        cw:emit(SET_16h_raw(cw:top(),  high16(note)))
+        cw:emit(SET_NOTE(cons, cw:pop()))
     end
 end
 
