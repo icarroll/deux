@@ -651,6 +651,7 @@ struct do_next run() {
         uint32_t arg8_2 = (arg24 >> 8) & 0xff;
         uint32_t arg8_3 = arg24 & 0xff;
 
+        //TODO check all uses of possible pointers for proper tagging/untagging
         switch (op) {
         case ABORT:
             throw_run_error("hit ABORT code");
@@ -686,7 +687,8 @@ struct do_next run() {
             break;
         case SET_NOTE:
             {
-                struct block_header * header = get_header(regs.arec_block[arg8_1]);
+                void * block = regs.arec_block[arg8_1];
+                struct block_header * header = get_header(untagptr(block));
                 header->note = (uint32_t) regs.arec_block[arg8_2];
             }
             break;
@@ -799,6 +801,15 @@ struct do_next run() {
 
             end = get_header(regs.code_block)->size / sizeof(void *);
             break;
+        case IS_ZERO:
+            {
+                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                regs.arec_block[arg8_1] = tagint(raw2 ? 0 : 1);
+            }
+            break;
+        case IS_ZERO_raw:
+            regs.arec_block[arg8_1] = tagint(regs.arec_block[arg8_2] ? 0 : 1);
+            break;
         case CONST_imm16:
             regs.arec_block[arg8_1] = tagint(arg16);
             break;
@@ -854,28 +865,41 @@ struct do_next run() {
             break;
         case ADD_raw:
             {
-                int raw2 = (int) regs.arec_block[arg8_2];
-                int raw3 = (int) regs.arec_block[arg8_3];
+                int32_t raw2 = (int32_t) regs.arec_block[arg8_2];
+                int32_t raw3 = (int32_t) regs.arec_block[arg8_3];
                 regs.arec_block[arg8_1] = (void *) (raw2 + raw3);
             }
             break;
         case SUB:
             {
-                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
+                int32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                int32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 - raw3);
+            }
+            break;
+        case SUB_raw:
+            {
+                int32_t raw2 = (int32_t) regs.arec_block[arg8_2];
+                int32_t raw3 = (int32_t) regs.arec_block[arg8_3];
+                regs.arec_block[arg8_1] = (void *) (raw2 - raw3);
             }
             break;
         case SUB_imm8:
             {
-                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                int32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 regs.arec_block[arg8_1] = tagint(raw2 - arg8_3);
+            }
+            break;
+        case SUB_imm8_raw:
+            {
+                int32_t raw2 = (int32_t) regs.arec_block[arg8_2];
+                regs.arec_block[arg8_1] = (void *) (raw2 - arg8_3);
             }
             break;
         case MUL:
             {
-                uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
-                uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
+                int32_t raw2 = untagint(regs.arec_block[arg8_2]);
+                int32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 * raw3);
             }
             break;
@@ -884,6 +908,12 @@ struct do_next run() {
                 uint32_t raw2 = untagint(regs.arec_block[arg8_2]);
                 uint32_t raw3 = untagint(regs.arec_block[arg8_3]);
                 regs.arec_block[arg8_1] = tagint(raw2 & raw3);
+            }
+            break;
+        case AND_imm8_raw:
+            {
+                uint32_t raw2 = (int32_t) regs.arec_block[arg8_2];
+                regs.arec_block[arg8_1] = (void *) (raw2 & arg8_3);
             }
             break;
         case OR:
@@ -898,6 +928,12 @@ struct do_next run() {
                 int raw2 = (int) regs.arec_block[arg8_2];
                 int raw3 = (int) regs.arec_block[arg8_3];
                 regs.arec_block[arg8_1] = (void *) (raw2 | raw3);
+            }
+            break;
+        case OR_imm8_raw:
+            {
+                uint32_t raw2 = (uint32_t) regs.arec_block[arg8_2];
+                regs.arec_block[arg8_1] = (void *) (raw2 | arg8_3);
             }
             break;
         case XOR:
@@ -921,7 +957,7 @@ struct do_next run() {
             break;
         case LSHIFT_imm8_raw:
             {
-                int raw = (int) regs.arec_block[arg8_2];
+                uint32_t raw = (uint32_t) regs.arec_block[arg8_2];
                 regs.arec_block[arg8_1] = (void *) (raw << arg8_3);
             }
             break;

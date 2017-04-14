@@ -452,6 +452,12 @@ lisp.load("lisp.lisp")
 lisp.repl()
 ]]
 
+TAG_MASK = 3
+PTR_TAG = 0
+SYM_TAG = 1
+CONS_TAG = 2
+INT_TAG = 3
+
 CODE_BLOCK = 0
 ICOUNT = 1
 DYN_PARENT = 2
@@ -529,6 +535,7 @@ function code_writer()
                 end
                 table.insert(args, item)
             end
+            --print(op, table.unpack(args))
             mem[ix-1] = calc_func[op](table.unpack(args))
         end
         return mem
@@ -620,7 +627,7 @@ do
         desc_block[DYN_PARENT] = raw(0xdeadbeef)   -- Currently unused
         desc_block[STAT_PARENT] = raw(0xdeadbeef)   -- Fixed up by caller
         desc_block[DESCRIPTOR] = raw(0xdeadbeef)   -- Currently unused
-        desc_block[DYN_TREE] = raw(0)
+        desc_block[DYN_TREE] = raw(0xdeadbeef)   -- Currently unused
         desc_block[SUB_AREC] = raw(0xdeadbeef)   -- Set by create_sub_arec
         desc_block[SUB_AREC_SIZE] = cw.localvars_start + cw.locals_count
                                     + cw.stack_max + 1
@@ -632,206 +639,217 @@ do
 
         return desc_block
     end
+end
 
-    function emit_code_for(cw, expr, symtab)
-        if type(expr) == "number" then
-            local ix = cw:push()
-            cw:emit(SET_14h(ix, high14(expr)))
-            cw:emit(SET_16l(ix, low16(expr)))
-        elseif expr == raw(0) then
-            cw:emit(CONST_imm16_raw(cw:push(), 0))
-        elseif expr.note == "symb" then
-            if symtab[expr] then
-                local kind, ix, count = table.unpack(symtab[expr])
-                if kind == "localvar" then
-                    cw:emit(COPY(cw:push(), symtab[expr]))
-                elseif kind == "nonlocalvar" then
-                    cw:emit(COPY(cw:push(), STAT_PARENT))
-                    for n = 1, count-1 do
-                        cw:emit(READ_FAR(cw:top(), cw:top(), STAT_PARENT))
-                    end
-                    cw:emit(READ_FAR(cw:top(), cw:top(), symtab[expr]))
-                else error("bad variable location")
+function emit_code_for(cw, expr, symtab)
+    if type(expr) == "number" then
+        local ix = cw:push()
+        cw:emit(SET_14h(ix, high14(expr)))
+        cw:emit(SET_16l(ix, low16(expr)))
+    elseif expr == raw(0) then
+        cw:emit(CONST_imm16_raw(cw:push(), 0))
+    elseif expr.note == "symb" then
+        if symtab[expr] then
+            local kind, ix, count = table.unpack(symtab[expr])
+            if kind == "localvar" then
+                cw:emit(COPY(cw:push(), symtab[expr]))
+            elseif kind == "nonlocalvar" then
+                cw:emit(COPY(cw:push(), STAT_PARENT))
+                for n = 1, count-1 do
+                    cw:emit(READ_FAR(cw:top(), cw:top(), STAT_PARENT))
                 end
-            else error("undefined variable")
+                cw:emit(READ_FAR(cw:top(), cw:top(), symtab[expr]))
+            else error("bad variable location")
             end
-        elseif expr.note == "cons" then
-            if expr[0] == sym("if") then
-                local true_branch = {}
-                local end_if = {}
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_IF_imm16(cw:top(), true_branch))
-                emit_code_for(cw, expr[1][1][1][0], symtab)
-                cw:pop()
-                cw:emit(JUMP_imm24(end_if))
-                cw:label(true_branch)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                cw:label(end_if)
-            elseif expr[0] == "cons" then
-                --[[
-                cw:emit(ALLOCATE_ALLPTR(cw:push(), 2))
-                local cons = cw:top()
-                local note = make_note("cons")
-                cw:emit(SET_16l_raw(cw:push(),  low16(note)))
-                cw:emit(SET_16h_raw(cw:top(),  high16(note)))
-                cw:emit(SET_NOTE(SUB_AREC, cw:pop()))
-                ]]
-                emit_code_for_cons(cw)
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(WRITE_FAR(cons, 0, cw:pop()))
-                emit_code_for(cw, expr[1][1][0], symtab)
-                cw:emit(WRITE_FAR(cons, 1, cw:pop()))
-            elseif expr[0] == "head" then
-                cw:emit(READ_FAR(cw:top(), 0, cw:top()))
-            elseif expr[0] == "tail" then
-                cw:emit(READ_FAR(cw:top(), 1, cw:top()))
-            elseif expr[0] == sym("do") then
-                emit_code_for_list(cw, expr[1], symtab)
-            elseif expr[0] == sym("fn") then
-                local desc_template = compile(expr[1][1][0], symtab, expr[1][0])
-                local ix = cw:desc_value(desc_template)
-                cw:emit(READ_FAR(cw:push(), DESCRIPTOR, ix))
-                cw:emit(COPY_BLOCK(cw:top(), cw:top()))
-                cw:emit(GET_AREC_FAR(cw:top(), STAT_PARENT))
-            elseif expr[0] == sym("new") then
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix = cw:localvar()
-                symtab[expr[1][0]] = ix
-                cw:emit(COPY(ix, cw:top()))
-            elseif expr[0] == sym("set") then
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix = symtab[expr[1][0]]
-                cw:emit(COPY(ix, cw:top()))
-            elseif expr[0] == sym("inc") then
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(ADD_imm8(cw:top(), cw:top(), 1))
-            elseif expr[0] == sym("dec") then
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(SUB_imm8(cw:top(), cw:top(), 1))
-            elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_REL_IF_imm16(cw:top(), 2))
-                cw:emit(CONST_imm16(cw:top(), 1))
-                cw:emit(JUMP_REL_imm24(1))
-                cw:emit(CONST_imm16(cw:top(), 0))
-            elseif expr[0] == sym("null?") then
-                emit_code_for(cw, expr[1][0], symtab)
-                cw:emit(JUMP_REL_IF_raw_imm16(cw:top(), 2))
-                cw:emit(CONST_imm16(cw:top(), 1))
-                cw:emit(JUMP_REL_imm24(1))
-                cw:emit(CONST_imm16(cw:top(), 0))
-            elseif expr[0] == sym("+") then
-                emit_code_for(cw, expr[1][0], symtab)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = cw:pop()
-                local ix1 = cw:pop()
-                cw:emit(ADD(cw:push(), ix1, ix2))
-            elseif expr[0] == sym("-") then
-                emit_code_for(cw, expr[1][0], symtab)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = cw:pop()
-                local ix1 = cw:pop()
-                cw:emit(SUB(cw:push(), ix1, ix2))
-            elseif expr[0] == sym("*") then
-                emit_code_for(cw, expr[1][0], symtab)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = cw:pop()
-                local ix1 = cw:pop()
-                cw:emit(MUL(cw:push(), ix1, ix2))
-            elseif expr[0] == sym("=") then
-                emit_code_for(cw, expr[1][0], symtab)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = cw:pop()
-                local ix1 = cw:pop()
-                local ix = cw:push()
-                cw:emit(SUB(ix2, ix1, ix2))
-                cw:emit(CONST_imm16(ix, 0))
-                cw:emit(JUMP_REL_IF_imm16(ix2, 1))
-                cw:emit(CONST_imm16(ix, 1))
-            elseif expr[0] == sym(">") then
-                emit_code_for(cw, expr[1][0], symtab)
-                emit_code_for(cw, expr[1][1][0], symtab)
-                local ix2 = cw:pop()
-                local ix1 = cw:pop()
-                cw:emit(SUB(cw:push(), ix1, ix2))
-                cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
-                cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
-            else
-                -- Function call
-                emit_code_for(cw, expr[0], symtab)
-                local actuals = expr[1]
-                if getmetatable(actuals) and actuals.note == "cons" then
-                    emit_code_for_cons(cw)   -- Emit head cons of list
-                    local cons_ix = cw:top()
-                    cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
-                    emit_code_for_actuals_list(cw, actuals, symtab)
-                    cw:pop()   -- Pop last cons of list
-                else emit_code_for(cw, actuals, symtab)
-                end
-                cw:emit(SET_LINK_DATA(cw:pop()))
-                cw:emit(JUMP_AREC(cw:pop()))
-                cw:emit(GET_LINK_DATA(cw:push()))
-            end
-        else error("bad compile")
+        else error("undefined variable")
         end
-    end
-
-    function emit_code_for_list(cw, exprs, symtab)
-        if exprs == raw(0) then
-            emit_code_for(cw, exprs, symtab)
-        else
-            emit_code_for(cw, exprs[0], symtab)
-            if exprs[1] ~= raw(0) then
-                cw:pop()
-                emit_code_for_list(cw, exprs[1], symtab)
-            end
-        end
-    end
-
-    function emit_code_for_formals(cw, formals, symtab)
-        if formals == raw(0) then return
-        elseif formals.note == "symb" then
-            local ix = cw:localvar()
-            symtab[formals] = ix
-            cw:emit(COPY(ix, cw:top()))
-        elseif formals.note == "cons" then
-            local cons = cw:top()
-            local tail = cw:top()
-            local head = cw:push()
-            cw:emit(READ_FAR(head, cons, 0))
-            cw:emit(READ_FAR(tail, cons, 1))
-            emit_code_for_formals(cw, formals[0], symtab)
+    elseif expr.note == "cons" then
+        if expr[0] == sym("if") then
+            local true_branch = {}
+            local end_if = {}
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(JUMP_IF_imm16(cw:top(), true_branch))
+            emit_code_for(cw, expr[1][1][1][0], symtab)
             cw:pop()
-            emit_code_for_formals(cw, formals[1], symtab)
-        else error("bad formals")
-        end
-    end
-
-    function emit_code_for_actuals_list(cw, actuals, symtab)
-        local cons_ix = cw:top()
-        emit_code_for(cw, actuals[0], symtab)
-        cw:emit(WRITE_FAR(cons_ix, 0, cw:pop()))
-
-        if getmetatable(actuals[1]) and actuals[1].note == "cons" then
+            cw:emit(JUMP_imm24(end_if))
+            cw:label(true_branch)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            cw:label(end_if)
+        elseif expr[0] == sym("quote") then
+            local ix = cw:desc_value(expr[1][0])
+            cw:emit(READ_FAR(cw:push(), DESCRIPTOR, ix))
+        elseif expr[0] == sym("cons") then
             emit_code_for_cons(cw)
-            cw:emit(WRITE_FAR(cons_ix, 1, cw:top()))
-            cw:emit(COPY(cons_ix, cw:pop()))
-            emit_code_for_actuals_list(cw, actuals[1], symtab)
-        else
             local cons_ix = cw:top()
-            emit_code_for(cw, actuals[1], symtab)
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(WRITE_FAR(cons_ix, 0, cw:pop()))
+            emit_code_for(cw, expr[1][1][0], symtab)
             cw:emit(WRITE_FAR(cons_ix, 1, cw:pop()))
+        elseif expr[0] == sym("head") then
+            cw:emit(READ_FAR(cw:top(), 0, cw:top()))
+        elseif expr[0] == sym("tail") then
+            cw:emit(READ_FAR(cw:top(), 1, cw:top()))
+        elseif expr[0] == sym("do") then
+            emit_code_for_do(cw, expr[1], symtab)
+        elseif expr[0] == sym("fn") then
+            local desc_template = compile(expr[1][1][0], symtab, expr[1][0])
+            local ix = cw:desc_value(desc_template)
+            cw:emit(READ_FAR(cw:push(), DESCRIPTOR, ix))
+            cw:emit(COPY_BLOCK(cw:top(), cw:top()))
+            cw:emit(GET_AREC_FAR(cw:top(), STAT_PARENT))
+        elseif expr[0] == sym("new") then
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix = cw:localvar()
+            symtab[expr[1][0]] = ix
+            cw:emit(COPY(ix, cw:top()))
+        elseif expr[0] == sym("set") then
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix = symtab[expr[1][0]]
+            cw:emit(COPY(ix, cw:top()))
+        elseif expr[0] == sym("inc") then
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(ADD_imm8(cw:top(), cw:top(), 1))
+        elseif expr[0] == sym("dec") then
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(SUB_imm8(cw:top(), cw:top(), 1))
+        elseif expr[0] == sym("zero?") or expr[0] == sym("not") then
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(IS_ZERO(cw:top(), cw:top()))
+        elseif expr[0] == sym("null?") then
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(IS_ZERO_raw(cw:top(), cw:top()))
+        elseif expr[0] == sym("cons?") then
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(AND_imm8_raw(cw:top(), cw:top(), TAG_MASK))
+            cw:emit(SUB_imm8_raw(cw:top(), cw:top(), CONS_TAG))
+            cw:emit(IS_ZERO_raw(cw:top(), cw:top()))
+        elseif expr[0] == sym("same?") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            cw:emit(SUB_raw(cw:push(), ix1, ix2))
+            cw:emit(IS_ZERO_raw(cw:top(), cw:top()))
+        elseif expr[0] == sym("list") then
+            local items = expr[1]
+            if getmetatable(items) and items.note == "cons" then
+                emit_code_for_cons(cw)   -- Emit head cons of list
+                local cons_ix = cw:top()
+                cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
+                emit_code_for_create_list(cw, items, symtab)
+                cw:pop()   -- Pop last cons of list
+            else emit_code_for(cw, items, symtab)
+            end
+        elseif expr[0] == sym("+") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            cw:emit(ADD(cw:push(), ix1, ix2))
+        elseif expr[0] == sym("-") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            cw:emit(SUB(cw:push(), ix1, ix2))
+        elseif expr[0] == sym("*") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            cw:emit(MUL(cw:push(), ix1, ix2))
+        elseif expr[0] == sym("=") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            local ix = cw:push()
+            cw:emit(SUB(ix2, ix1, ix2))
+            cw:emit(IS_ZERO(cw:top(), cw:top()))
+        elseif expr[0] == sym(">") then
+            emit_code_for(cw, expr[1][0], symtab)
+            emit_code_for(cw, expr[1][1][0], symtab)
+            local ix2 = cw:pop()
+            local ix1 = cw:pop()
+            cw:emit(SUB(cw:push(), ix1, ix2))
+            cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
+            cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
+        else
+            -- Function call
+            emit_code_for(cw, expr[0], symtab)
+            local actuals = expr[1]
+            if getmetatable(actuals) and actuals.note == "cons" then
+                emit_code_for_cons(cw)   -- Emit head cons of list
+                local cons_ix = cw:top()
+                cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
+                emit_code_for_create_list(cw, actuals, symtab)
+                cw:pop()   -- Pop last cons of list
+            else emit_code_for(cw, actuals, symtab)
+            end
+            cw:emit(SET_LINK_DATA(cw:pop()))
+            cw:emit(JUMP_AREC(cw:pop()))
+            cw:emit(GET_LINK_DATA(cw:push()))
+        end
+    else error("bad compile")
+    end
+end
+
+function emit_code_for_do(cw, exprs, symtab)
+    if exprs == raw(0) then
+        emit_code_for(cw, exprs, symtab)
+    else
+        emit_code_for(cw, exprs[0], symtab)
+        if exprs[1] ~= raw(0) then
+            cw:pop()
+            emit_code_for_do(cw, exprs[1], symtab)
         end
     end
+end
 
-    function emit_code_for_cons(cw)
-        cw:emit(ALLOCATE_ALLPTR_imm16(cw:push(), 2))
-        local cons = cw:top()
-        local note = make_note("cons")
-        cw:emit(SET_16l_raw(cw:push(),  low16(note)))
-        cw:emit(SET_16h_raw(cw:top(),  high16(note)))
-        cw:emit(SET_NOTE(cons, cw:pop()))
+function emit_code_for_formals(cw, formals, symtab)
+    if formals == raw(0) then return
+    elseif formals.note == "symb" then
+        local ix = cw:localvar()
+        symtab[formals] = ix
+        cw:emit(COPY(ix, cw:top()))
+    elseif formals.note == "cons" then
+        local cons_ix = cw:top()
+        local tail_ix = cw:top()
+        local head_ix = cw:push()
+        cw:emit(READ_FAR(head_ix, cons_ix, 0))
+        cw:emit(READ_FAR(tail_ix, cons_ix, 1))
+        emit_code_for_formals(cw, formals[0], symtab)
+        cw:pop()
+        emit_code_for_formals(cw, formals[1], symtab)
+    else error("bad formals")
     end
+end
+
+function emit_code_for_create_list(cw, actuals, symtab)
+    local cons_ix = cw:top()
+    emit_code_for(cw, actuals[0], symtab)
+    cw:emit(WRITE_FAR(cons_ix, 0, cw:pop()))
+
+    if getmetatable(actuals[1]) and actuals[1].note == "cons" then
+        emit_code_for_cons(cw)
+        cw:emit(WRITE_FAR(cons_ix, 1, cw:top()))
+        cw:emit(COPY(cons_ix, cw:pop()))
+        emit_code_for_create_list(cw, actuals[1], symtab)
+    else
+        local cons_ix = cw:top()
+        emit_code_for(cw, actuals[1], symtab)
+        cw:emit(WRITE_FAR(cons_ix, 1, cw:pop()))
+    end
+end
+
+function emit_code_for_cons(cw)
+    cw:emit(ALLOCATE_ALLPTR_imm16(cw:push(), 2))
+    local cons_ix = cw:top()
+    cw:emit(OR_imm8_raw(cons_ix, cons_ix, CONS_TAG))
+    local note = make_note("cons")
+    cw:emit(SET_16l_raw(cw:push(),  low16(note)))
+    cw:emit(SET_16h_raw(cw:top(),  high16(note)))
+    cw:emit(SET_NOTE(cons_ix, cw:pop()))
 end
 
 function call_vm(sub_arec, arg)
@@ -848,6 +866,15 @@ function call_vm(sub_arec, arg)
     return execute(dblock, arg)
 end
 
-function pcomp(...)
-    return compile(parse(...))
+function pcomp(text)
+    return compile(parse(text))
+end
+
+function scall(sub, arg)
+    arg = arg or raw(0)
+    show(call_vm(sub, arg))
+end
+
+function run(text)
+    show(call_vm(compile(parse(text)), raw(0)))
 end
