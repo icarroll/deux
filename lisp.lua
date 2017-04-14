@@ -665,15 +665,8 @@ function emit_code_for(cw, expr, symtab)
         end
     elseif expr.note == "cons" then
         if expr[0] == sym("if") then
-            local true_branch = {}
             local end_if = {}
-            emit_code_for(cw, expr[1][0], symtab)
-            cw:emit(JUMP_IF_imm16(cw:top(), true_branch))
-            emit_code_for(cw, expr[1][1][1][0], symtab)
-            cw:pop()
-            cw:emit(JUMP_imm24(end_if))
-            cw:label(true_branch)
-            emit_code_for(cw, expr[1][1][0], symtab)
+            emit_code_for_if(cw, expr[1], symtab, end_if)
             cw:label(end_if)
         elseif expr[0] == sym("quote") then
             local ix = cw:desc_value(expr[1][0])
@@ -791,6 +784,23 @@ function emit_code_for(cw, expr, symtab)
             cw:emit(GET_LINK_DATA(cw:push()))
         end
     else error("bad compile")
+    end
+end
+
+function emit_code_for_if(cw, clauses, symtab, end_if)
+    if clauses == raw(0) then
+        emit_code_for(cw, clauses, symtab)
+    else
+        emit_code_for(cw, clauses[0], symtab)
+        if clauses[1] ~= raw(0) then
+            local next_clause = {}
+            cw:emit(JUMP_UNLS_imm16(cw:pop(), next_clause))
+            emit_code_for(cw, clauses[1][0], symtab)
+            cw:emit(JUMP_imm24(end_if))
+            cw:label(next_clause)
+            cw:pop()
+            emit_code_for_if(cw, clauses[1][1], symtab, end_if)
+        end
     end
 end
 

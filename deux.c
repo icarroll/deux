@@ -760,6 +760,11 @@ struct do_next run() {
                 regs.icount += (int16_t) arg16;
             }
             break;
+        case JUMP_UNLS_imm16:
+            if (! untagint(regs.arec_block[arg8_1])) {
+                regs.icount = arg16;
+            }
+            break;
         //TODO check for out-of-heap jumps
         case JUMP_FAR:
             //TODO check for jump to nonzerotag pointer
