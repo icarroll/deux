@@ -499,6 +499,7 @@ function code_writer()
         return {"localvar", self.locals_count - 1}
     end
 
+    --TODO deduplicate values
     function cw:desc_value(value)
         table.insert(self.desc_values, value)
         return {"desc_value", #self.desc_values - 1}
@@ -661,7 +662,7 @@ function emit_code_for(cw, expr, symtab)
                 cw:emit(READ_FAR(cw:top(), cw:top(), symtab[expr]))
             else error("bad variable location")
             end
-        else error("undefined variable")
+        else show(expr) ; error("undefined variable")
         end
     elseif expr.note == "cons" then
         if expr[0] == sym("if") then
