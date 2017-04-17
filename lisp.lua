@@ -685,6 +685,9 @@ function emit_code_for(cw, expr, symtab)
             cw:emit(READ_FAR(cw:top(), 1, cw:top()))
         elseif expr[0] == sym("do") then
             emit_code_for_do(cw, expr[1], symtab)
+        elseif expr[0] == sym("mac") then
+            local desc = compile(expr[1][1][1][0], symtab, expr[1][1][0])
+            symtab[expr[1][0]] = {"macro", desc}
         elseif expr[0] == sym("fn") then
             local desc_template = compile(expr[1][1][0], symtab, expr[1][0])
             local ix = cw:desc_value(desc_template)
@@ -769,20 +772,27 @@ function emit_code_for(cw, expr, symtab)
             cw:emit(RSHIFT_imm8(cw:top(), cw:top(), 29))
             cw:emit(XOR_imm8(cw:top(), cw:top(), 1))
         else
-            -- Function call
-            emit_code_for(cw, expr[0], symtab)
-            local actuals = expr[1]
-            if getmetatable(actuals) and actuals.note == "cons" then
-                emit_code_for_cons(cw)   -- Emit head cons of list
-                local cons_ix = cw:top()
-                cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
-                emit_code_for_create_list(cw, actuals, symtab)
-                cw:pop()   -- Pop last cons of list
-            else emit_code_for(cw, actuals, symtab)
+            if (symtab[expr[0]] or {})[1] == "macro" then
+                -- Macro expansion
+                local mac = symtab[expr[0]][2]
+                local result = call_vm(mac, expr[1])
+                emit_code_for(cw, result, symtab)
+            else
+                -- Function application
+                emit_code_for(cw, expr[0], symtab)
+                local actuals = expr[1]
+                if getmetatable(actuals) and actuals.note == "cons" then
+                    emit_code_for_cons(cw)   -- Emit head cons of list
+                    local cons_ix = cw:top()
+                    cw:emit(COPY(cw:push(), cons_ix))   -- Copy for building list
+                    emit_code_for_create_list(cw, actuals, symtab)
+                    cw:pop()   -- Pop last cons of list
+                else emit_code_for(cw, actuals, symtab)
+                end
+                cw:emit(SET_LINK_DATA(cw:pop()))
+                cw:emit(JUMP_AREC(cw:pop()))
+                cw:emit(GET_LINK_DATA(cw:push()))
             end
-            cw:emit(SET_LINK_DATA(cw:pop()))
-            cw:emit(JUMP_AREC(cw:pop()))
-            cw:emit(GET_LINK_DATA(cw:push()))
         end
     else error("bad compile")
     end
