@@ -1,29 +1,15 @@
-;(new quote (special quote))
-;(new if (special if))
-;(new fn (special fn))
-;(new mac (special mac))
-;(new new (special new))
-;(new set (special set))
-;(new builtin (special builtin))
-
 (new t 't)
 (new nil ())
 
-(new cons (fn (a b) ((fn x x) a . b)))
-(new head (fn (x) ((fn (a . b) a) . x)))
-(new tail (fn (x) ((fn (a . b) b) . x)))
-
-(new list (fn args args))
-
-(new def (mac (name argspec . body) (list 'new name (list 'fn argspec . body))))
-(new defmac (mac (name argspec . body) (list 'new name (list 'mac argspec . body))))
+(new def (mac (name argspec . body)
+              (list 'do
+                    (list 'new name ())
+                    (list 'set name (list 'fn argspec . body)))))
 
 (def map1 (f xs)
      (if xs (cons (f (head xs)) (map1 f (tail xs)))
        nil))
 
-(def not (c)
-     (if c nil t))
 (def and2 (x y)
      (if x (if y t
              nil)
@@ -32,8 +18,6 @@
      (if x t
        (if y t
          nil)))
-
-(new null? not)
 
 (def reduce-ss (f xs x v)
      (if (alike? x v) v
@@ -60,21 +44,12 @@
      (if (null? args) ()
        (reduce append2 (tail args) (head args))))
 
-(new sym? (builtin issym))
-(new cons? (builtin iscons))
-
-(new same? (builtin issame))
 (def alike? (a b)
      (if (same? a b) t
          (and (cons? a) (cons? b))
              (and (alike? (head a) (head b))
                   (alike? (tail a) (tail b)))
           nil))
-
-(new = same?)
-(new + (builtin plus))
-(new - (builtin minus))
-(new * (builtin times))
 
 (def len (xs)
      (if (null? xs) 0
@@ -97,7 +72,7 @@
                          (list 'cons (qq (head x)) (qq (tail x))))
                  (list 'cons (qq (head x)) (qq (tail x))))
          (list 'quote x)))
-(defmac quasiquote (thing)
+(mac quasiquote (thing)
     (qq thing))
 
 (def these (items)
@@ -108,14 +83,8 @@
     (if (null? items) ()
         (these (tail items))))
 
-(defmac with (pairs . body)
+(mac with (pairs . body)
     `((fn ,(these pairs) ,@body) ,@(those pairs)))
 
-(defmac let (var val . body)
+(mac let (var val . body)
     `((fn (,var) ,@body) ,val))
-
-(defmac do args
-    `((fn () ,@args)))
-
-(new reads (builtin read_sexpr))
-(new writes (builtin write_sexpr))
