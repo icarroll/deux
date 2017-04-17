@@ -565,7 +565,7 @@ void print_disassembly(void ** code, int size) {
             printf("0x%02x 0x%02x 0x%02x", arg8_1, arg8_2, arg8_3);
             break;
         default:
-            die("bad arg pattern");
+            printf("bad arg pattern %d", arg_pattern(op));
         }
 
         putchar('\n');
