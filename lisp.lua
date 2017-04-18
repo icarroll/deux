@@ -705,8 +705,18 @@ function emit_code_for(cw, expr, symtab)
             cw:emit(COPY(ix, cw:top()))
         elseif expr[0] == sym("set") then
             emit_code_for(cw, expr[1][1][0], symtab)
-            local ix = symtab[expr[1][0]]
-            cw:emit(COPY(ix, cw:top()))
+            local value_ix = cw:top()
+            local kind, ix, count = table.unpack(symtab[expr[1][0]])
+            if kind == "localvar" then
+                cw:emit(COPY(symtab[expr[1][0]], value_ix))
+            elseif kind == "nonlocalvar" then
+                cw:emit(COPY(cw:push(), STAT_PARENT))
+                for n = 1, count-1 do
+                    cw:emit(READ_FAR(cw:top(), cw:top(), STAT_PARENT))
+                end
+                cw:emit(WRITE_FAR(cw:pop(), symtab[expr[1][0]], value_ix))
+            else error("bad variable location " .. kind)
+            end
         elseif expr[0] == sym("inc") then
             emit_code_for(cw, expr[1][0], symtab)
             cw:emit(ADD_imm8(cw:top(), cw:top(), 1))
