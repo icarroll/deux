@@ -514,6 +514,7 @@ function code_writer()
     end
 
     function cw:create_block()
+        --inspect = require "inspect" ; print(inspect(self))
         local mem = alloc_code(#self)
         for ix = 1,#self do
             local items = self[ix]
@@ -680,14 +681,17 @@ function emit_code_for(cw, expr, symtab)
             emit_code_for(cw, expr[1][1][0], symtab)
             cw:emit(WRITE_FAR(cons_ix, 1, cw:pop()))
         elseif expr[0] == sym("head") then
-            cw:emit(READ_FAR(cw:top(), 0, cw:top()))
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(READ_FAR(cw:top(), cw:top(), 0))
         elseif expr[0] == sym("tail") then
-            cw:emit(READ_FAR(cw:top(), 1, cw:top()))
+            emit_code_for(cw, expr[1][0], symtab)
+            cw:emit(READ_FAR(cw:top(), cw:top(), 1))
         elseif expr[0] == sym("do") then
             emit_code_for_do(cw, expr[1], symtab)
         elseif expr[0] == sym("mac") then
             local desc = compile(expr[1][1][1][0], symtab, expr[1][1][0])
             symtab[expr[1][0]] = {"macro", desc}
+            emit_code_for(cw, raw(0), symtab)
         elseif expr[0] == sym("fn") then
             local desc_template = compile(expr[1][1][0], symtab, expr[1][0])
             local ix = cw:desc_value(desc_template)
