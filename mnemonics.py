@@ -63,6 +63,11 @@ mnemonics = [("ABORT",(0,)),
              ("DEBUG_WRITEHEX_int",(12,)),
              ]
 
+if len(mnemonics) > 256:
+    print("too many mnemonics")
+    import sys
+    sys.exit(1)
+
 h_start = """
 #ifndef MNEMONICS_H
 #define MNEMONICS_H
