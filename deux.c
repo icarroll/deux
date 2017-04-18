@@ -675,6 +675,13 @@ struct do_next run() {
         case ALLOCATE_ALLPTR_imm16:
             regs.arec_block[arg8_1] = allocate_allptr(arg16 * sizeof(void *));
             break;
+        case ALLOCATE_CONS:
+            {
+                void * new_cons = allocate_allptr(2 * sizeof(void *));
+                get_header(new_cons)->note = make_note("cons");
+                regs.arec_block[arg8_1] = tagconsptr(new_cons);
+            }
+            break;
         case COPY_BLOCK:
             {
                 void * old_block = untagptr(regs.arec_block[arg8_2]);

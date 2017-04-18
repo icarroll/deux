@@ -864,6 +864,7 @@ function emit_code_for_create_list(cw, actuals, symtab)
 end
 
 function emit_code_for_cons(cw)
+    --[[
     cw:emit(ALLOCATE_ALLPTR_imm16(cw:push(), 2))
     local cons_ix = cw:top()
     cw:emit(OR_imm8_raw(cons_ix, cons_ix, CONS_TAG))
@@ -871,6 +872,8 @@ function emit_code_for_cons(cw)
     cw:emit(SET_16l_raw(cw:push(),  low16(note)))
     cw:emit(SET_16h_raw(cw:top(),  high16(note)))
     cw:emit(SET_NOTE(cons_ix, cw:pop()))
+    ]]
+    cw:emit(ALLOCATE_CONS(cw:push()))
 end
 
 function call_vm(sub_arec, arg)
