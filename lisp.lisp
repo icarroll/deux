@@ -1,10 +1,10 @@
 (new t 't)
 (new nil ())
 
-(new def (mac (name argspec . body)
-              (list 'do
-                    (list 'new name ())
-                    (list 'set name (list 'fn argspec . body)))))
+(mac def (name argspec . body)
+     (list 'do
+           (list 'new name ())
+           (list 'set name (list 'fn argspec . body))))
 
 (def map1 (f xs)
      (if xs (cons (f (head xs)) (map1 f (tail xs)))
